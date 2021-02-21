@@ -5,7 +5,6 @@
 #include "base64.h"
 
 #define B64_BITS	6
-#define B64_MASK	0x3f
 
 static const char BASE64_CHAR[] = {
 	'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
@@ -17,21 +16,14 @@ static const char BASE64_CHAR[] = {
 
 int str2bin_b64(unsigned char *binbytes, int num, const char *str)
 {
-	int bpos, bitpos, bbit, padded, shnxt;
+	int bpos, bitpos, bbit;
+	unsigned char nxtbyte, nchr;
 	const char *pchr;
-	char nchr;
-	unsigned short nv, digit;
+	unsigned short digit;
 
-	memset(binbytes, 0, num);
-
-	bpos = 0;
-	padded = 0;
 	bitpos = 0;
-	bbit = 5;
-	nv = 0;
-	shnxt = 0;
 	pchr = str;
-	while (*pchr != 0) {
+	while (*pchr != 0 && *pchr != '=') {
 		nchr = *pchr++;
 		if (nchr >= 'A' && nchr <= 'Z')
 			digit = nchr - 'A';
@@ -43,81 +35,92 @@ int str2bin_b64(unsigned char *binbytes, int num, const char *str)
 			digit = 62;
 		else if (nchr == '/')
 			digit = 63;
-		else if (nchr == '=') {
-			padded = 1;
+		else if ((nchr == '=') && *(pchr+1) == 0)
 			break;
-		} else
-			break;
+		else
+			return -2;
 
-		shnxt = 0;
 		bpos = bitpos >> 3;
 		if (bpos == num)
 			return -1;
-		bbit =  7 - (bitpos & 7);
-		if (bbit > 5)
-			binbytes[bpos] |= (digit << (bbit - 5));
-		else if (bbit < 5) {
-			shnxt = 1;
-			binbytes[bpos] |= (digit >> (5 - bbit));
-			nv = (digit << (3 + bbit)) & 0x0ff;
-			if (bpos == num - 1) {
-				if (nv != 0)
-					return -1;
-			} else {
-				binbytes[bpos+1] |= nv;
-			}
-		} else
+		nxtbyte = 255;
+		bbit = bitpos & 7;
+		switch(bbit) {
+		case 0:
+			binbytes[bpos] = (digit << 2);
+			break;
+		case 6:
+			binbytes[bpos] |= (digit >> 4);
+			nxtbyte = ((digit & 0x0f) << 4);
+			break;
+		case 4:
+			binbytes[bpos] |= (digit >> 2);
+			nxtbyte = ((digit & 3) << 6);
+			break;
+		case 2:
 			binbytes[bpos] |= digit;
+			break;
+		default:
+			assert(0);
+		}
+		if (nxtbyte != 255) {
+			if (bpos + 1 < num)
+				binbytes[bpos+1] = nxtbyte;
+			else if (nxtbyte != 0 || *(pchr+1) != '=')
+				return -1;
+		}
+
 		bitpos += B64_BITS;
 	}
-	if (bbit != 5 && (shnxt != 1 || nv != 0 || padded == 0))
-		return -2;
 	return bpos + 1;
 }
 
 int bin2str_b64(char *strbuf, int len, const unsigned char *binbytes, int num)
 {
-	int numbits, i;
+	int i, idx;
 	char *p64;
-	unsigned char mc;
-	int bpos, bbit, padded, rsb;
-	unsigned short tmpc, mask;
+	unsigned char nxtbyte;
+	int bpos, bbit;
+	unsigned short tmpc;
 
-	numbits = num << 3;
-
-	padded = 0;
 	p64 = strbuf;
-	for (i = 0; i < numbits; i += B64_BITS) {
+	for (i = 0; i < (num << 3) && (p64 - strbuf) < len; i += B64_BITS) {
 		bpos = (i >> 3);
 		bbit = i & 7;
-		rsb = 8 - (bbit + B64_BITS);
 		tmpc = binbytes[bpos];
-		mask = 0x0ff;
-		if (rsb < 0) {
-			if (bpos == num - 1) {
-				padded = 1;
-				mc = 0;
-			} else
-				mc = binbytes[bpos+1];
-			mask = 0x0ffff;
-			tmpc = (tmpc << 8) | mc;
-			rsb += 8;
+		if (__builtin_expect(bpos + 1 < num, 1))
+			nxtbyte = binbytes[bpos+1];
+		else
+			nxtbyte = 0;
+		switch(bbit) {
+		case 0:
+			idx = tmpc >> 2;
+			break;	
+		case 6:
+			idx = ((tmpc & 3) << 4) | (nxtbyte >> 4);
+			break;
+		case 4:
+			idx = ((tmpc & 0x0f) << 2) | (nxtbyte >> 6);
+			break;
+		case 2:
+			idx = tmpc & 0x3f;
+			break;
+		default:
+			assert(0);
 		}
-		tmpc = ((tmpc << bbit) & mask) >> (bbit + rsb);
-//		tmpc = tmpc >> rsb;
-		assert(tmpc < 64);
-		if (p64 < strbuf +  len)
-			*p64 = BASE64_CHAR[tmpc];
-		p64++;
+		assert(idx < 64);
+		*p64++ = BASE64_CHAR[idx];
 	}
-	if (padded) {
+	if (p64 - strbuf == len)
+		return len;
+	if (bbit == 4 || bbit == 6) {
 		if (p64 < strbuf + len)
-			*p64 = '=';
-		p64++;
+			*p64++ = '=';
+		if (bbit == 6)
+			if (p64 < strbuf + len)
+				*p64++ = '=';
 	}
 	if (p64 < strbuf + len)
 		*p64 = 0;
-	else
-		*(strbuf+len-1) = 0;
 	return (int)(p64 - strbuf);
 }
