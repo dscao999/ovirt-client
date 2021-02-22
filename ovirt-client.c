@@ -2,16 +2,21 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <b64/cencode.h>
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+#include "base64.h"
+#include "ovirt_xml.h"
 #include "ovirt-client.h"
 
 enum OVIRTCMD {
-	INIT = 0, LOGON_SSO = 1, LOGON_SESSON = 2, GETVMS = 3, GETCON = 4,
-	GETVV = 5
+	INIT = 0, INIT_DONE = 1, LOGON_SSO = 2, LOGON_SESSON = 3, GETVMS = 4,
+	GETCON = 5, GETVV = 6
 };
 
 #define OVIRT_SIZE (4*1024*1024)
 #define OVIRT_HEADER_SIZE	(1024*1024)
+
+static const char HTTP_OK[] = "HTTP/1.1 200 OK";
 
 static size_t upload(char *buf, size_t siz, size_t nitems, void *usrdat)
 {
@@ -122,7 +127,7 @@ struct ovirt * ovirt_init(const char *ohost, int verbose)
 		munmap(ov, OVIRT_SIZE + OVIRT_HEADER_SIZE);
 		return NULL;
 	}
-	curl_easy_setopt(ov->curl, CURLOPT_VERBOSE, verbose);
+//	curl_easy_setopt(ov->curl, CURLOPT_VERBOSE, verbose);
 	curl_easy_setopt(ov->curl, CURLOPT_FOLLOWLOCATION, 1);
 	curl_easy_setopt(ov->curl, CURLOPT_READFUNCTION, upload);
 	curl_easy_setopt(ov->curl, CURLOPT_READDATA, ov);
@@ -147,62 +152,56 @@ void ovirt_exit(struct ovirt *ov)
 }
 
 static const char ovirt_api[] = "/ovirt-engine/api";
-static const char hd_auth[] = "Authorization: Basic ";
+static const char hd_basic_auth[] = "Authorization: Basic ";
 static const char hd_accept_xml[] = "Accept: application/xml";
 int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain)
 {
 	struct curl_slist *header = NULL;
-	int retv, len, rlen;
+	int retv, len;
 	static const char pasfmt[] = "%s@%s:%s";
 	char passkey[96], *uri;
 	const char *dm;
-	base64_encodestate b64;
+	struct ovirt_xml *oxml;
 
 	retv = 0;
-	if (ov->version < 4) {
-		if (domain == NULL || strlen(domain) == 0)
-			dm = "internal";
-		else
-			dm = domain;
-		retv = snprintf(passkey, 96, pasfmt, user, dm, pass);
+	if (domain == NULL || strlen(domain) == 0)
+		dm = "internal";
+	else
+		dm = domain;
+	header = curl_slist_append(header, hd_accept_xml);
+	if (ov->version < 4 || ov->ocmd == INIT) {
+		len = snprintf(passkey, 96, pasfmt, user, dm, pass);
 		if (retv >= 95)
 			fprintf(stderr, "Warning: ID token too long.\n");
-		base64_init_encodestate(&b64);
-		len = base64_encode_block(passkey, strlen(passkey), ov->dndat, &b64);
-		rlen = base64_encode_blockend(ov->dndat + len, &b64);
-		len += rlen;
-		if (ov->dndat[len-1] == '\n')
-			ov->dndat[len-1] = 0;
-		else
-			ov->dndat[len] = 0;
-		strcpy(ov->token, hd_auth);
+		len = bin2str_b64(ov->dndat, ov->max_dnlen,
+				(const unsigned char *)passkey, len);
+		strcpy(ov->token, hd_basic_auth);
 		strcat(ov->token, ov->dndat);
 		header = curl_slist_append(header, ov->token);
-		header = curl_slist_append(header, hd_accept_xml);
-		if (ov->version == 0) {
-			uri = passkey;
-			strcpy(uri, ov->engine);
-			strcat(uri, ovirt_api);
-			curl_easy_setopt(ov->curl, CURLOPT_URL, uri);
-			curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
-			ov->hdlen = 0;
-			ov->dnlen = 0;
-			ov->errmsg[0] = 0;
-			retv = curl_easy_perform(ov->curl);
+	}
+	if (ov->ocmd == INIT) {
+		uri = passkey;
+		strcpy(uri, ov->engine);
+		strcat(uri, ovirt_api);
+		curl_easy_setopt(ov->curl, CURLOPT_URL, uri);
+		curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+		ov->hdlen = 0;
+		ov->dnlen = 0;
+		ov->errmsg[0] = 0;
+		retv = curl_easy_perform(ov->curl);
+		if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf)
+			fprintf(stderr, "HTTP Error:\n%s\n", ov->hdbuf);
+		else {
+			oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
+			if (oxml) {
+				len = ovirt_xml_get(oxml, "/api/product_info/version/major",
+						ov->dndat, ov->dnlen);
+				printf("Version: %s\n", ov->dndat);
+				ov->ocmd = INIT_DONE;
+			}
+			ovirt_xml_exit(oxml);
 		}
 	}
-
-/*	if (ov->ocmd == INIT) {
-		strcpy(url, ov->engine);
-		strcat(url, "/ovirt-engine/api");
-		curl_easy_setopt(ov->curl, CURLOPT_URL, url);
-		header = curl_slist_append(header, "Accept: application/xml");
-		curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
-		retv = curl_easy_perform(ov->curl);
-		fprintf(stderr, "CURL Return Code: %d\n", retv);
-		ov->dndat[ov->dnlen] = 0;
-		*(ov->hdbuf+ov->hdlen) = 0;
-		curl_slist_free_all(header); */
 	return retv;
 }

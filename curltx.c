@@ -21,9 +21,9 @@ int main(int argc, char *argv[])
 	}
 	retv = ovirt_logon(ov, "test1", "Lenovo@123", NULL);
 	printf("RETV: %d\n", retv);
-	printf("Header:\n%s\n", ov->hdbuf);
-	printf("Response:\n%s\n", ov->dndat);
-	printf("Error Message:\n%s\n", ov->errmsg);
+/*	printf("Header:\n%s\n", ov->hdbuf);
+	printf("Response length %d:\n%s\n", ov->dnlen, ov->dndat);
+	printf("Error Message:\n%s\n", ov->errmsg);*/
 	ovirt_exit(ov);
 	return retv;
 }
