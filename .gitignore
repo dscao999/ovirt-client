@@ -54,6 +54,8 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
+# core file
+core
 # executables of this project
 b64
 curltx

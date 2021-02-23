@@ -5,7 +5,7 @@ CFLAGS +=-Wall -g -I/usr/include/libxml2
 all: curltx b64 xmlp
 
 curltx: curltx.o ovirt-client.o ovirt_xml.o base64.o
-	$(LINK.o) $^ -lcurl -lxml2 -o $@
+	$(LINK.o) $^ -lcurl -lxml2 -ljansson -o $@
 
 b64: b64encode.o base64.o
 	$(LINK.o) $^ -o $@

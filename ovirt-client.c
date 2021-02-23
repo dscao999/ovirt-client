@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <jansson.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #include "base64.h"
@@ -17,6 +18,7 @@ enum OVIRTCMD {
 #define OVIRT_HEADER_SIZE	(1024*1024)
 
 static const char HTTP_OK[] = "HTTP/1.1 200 OK";
+static const char HTTP_UNAUTH[] = "HTTP/1.1 401 Unauthorized";
 
 static size_t upload(char *buf, size_t siz, size_t nitems, void *usrdat)
 {
@@ -65,12 +67,45 @@ static size_t hdrecv(char *buf, size_t siz, size_t nitems, void *usrdat)
 	return hdlen;
 }
 
-static int ovirt_oauth_login(struct ovirt *ov, const char *user,
+static int get_json_token(char *buf, int buflen, const char *jtxt)
+{
+	json_error_t jerr;
+	int retv = 0;
+	json_t *root, *token;
+	const char *token_str;
+
+	root = json_loads(jtxt, 0, &jerr);
+	if (!root) {
+		fprintf(stderr, "OAUTH Response Invalid: %s\n", jerr.text);
+		return -1;
+	}
+	token = json_object_get(root, "access_token");
+	if (!json_is_string(token)) {
+		fprintf(stderr, "OAUTH Response missing \"access_token\".\n");
+		retv = -2;
+		goto exit_10;
+	}
+	token_str = json_string_value(token);
+	if (strlen(token_str) > buflen - 24) {
+		fprintf(stderr, "Buffer overflow in get_json_token.\n");
+		retv = -3;
+		goto exit_10;
+	}
+	strcpy(buf, "Authorization: Bearer ");
+	strcat(buf, token_str);
+
+exit_10:
+	json_decref(root);
+	return retv;
+}
+
+static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 		const char *pass, const char *domain)
 {
 	static const char sso_path[] = "/ovirt-engine/sso/oauth/token";
 	static const char sso_param[] = "grant_type=password&" \
 			"scope=ovirt-app-api&username=%s@%s&password=%s";
+	static const char achd_json[] = "Accept: application/json";
 	const char *dom;
         char url[128];
 	char *postdata;
@@ -89,18 +124,78 @@ static int ovirt_oauth_login(struct ovirt *ov, const char *user,
 	if (ov->uplen == sizeof(ov->updat) - 1)
 		fprintf(stderr, "Warning: sso param may have overflowed" \
 			       " the buffer.\n");
-	postdata = curl_easy_escape(ov->curl, ov->updat, ov->uplen);
-	header = curl_slist_append(header, "Accept: application/json");
+	postdata = malloc(strlen(ov->updat+1));
+	strcpy(postdata, ov->updat);
+	header = curl_slist_append(header, achd_json);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, strlen(postdata));
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, postdata); 
 	ov->dnlen = 0;
-	ov->ocmd = LOGON_SSO;
 	ov->errmsg[0] = 0;
 	retv = curl_easy_perform(ov->curl);
 	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	curl_slist_free_all(header);
-	curl_free(postdata);
+	free(postdata);
+	ov->dndat[ov->dnlen] = 0;
+	ov->hdbuf[ov->hdlen] = 0;
+	if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf) {
+		fprintf(stderr, "OAUTH logon operation failed:\n%s\n%s\n",
+				ov->hdbuf, ov->dndat);
+		retv = -1;
+	}
+	retv = get_json_token(ov->token, sizeof(ov->token), ov->dndat);
+	if (retv >= 0)
+		ov->auth = AUTH_OAUTH;
+	return retv;
+}
+
+static const char ovirt_api[] = "/ovirt-engine/api";
+static const char hd_basic_auth[] = "Authorization: Basic ";
+static const char hd_accept_xml[] = "Accept: application/xml";
+
+static int ovirt_basic_logon(struct ovirt *ov, const char *user,
+		const char *pass, const char *domain)
+{
+	struct curl_slist *header = NULL;
+	static const char pasfmt[] = "%s@%s:%s";
+	char passkey[96], *uri;
+	const char *dm;
+	int len, retv;
+
+	if (domain == NULL || strlen(domain) == 0)
+		dm = "internal";
+	else
+		dm = domain;
+	len = snprintf(passkey, 96, pasfmt, user, dm, pass);
+	if (len >= 95)
+		fprintf(stderr, "Warning: ID token too long.\n");
+	len = bin2str_b64(ov->dndat, ov->max_dnlen,
+			(const unsigned char *)passkey, len);
+	strcpy(ov->token, hd_basic_auth);
+	strcat(ov->token, ov->dndat);
+	header = curl_slist_append(header, ov->token);
+	uri = passkey;
+	strcpy(uri, ov->engine);
+	strcat(uri, ovirt_api);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, uri);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 1); 
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	retv = curl_easy_perform(ov->curl);
+	curl_slist_free_all(header);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0); 
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf) {
+		fprintf(stderr, "oVirt basic logon operation:\n%s\n%s\n",
+				ov->hdbuf, ov->dndat);
+		retv = -1;
+	}
+	ov->auth = AUTH_BASIC;
 	return retv;
 }
 
@@ -127,7 +222,7 @@ struct ovirt * ovirt_init(const char *ohost, int verbose)
 		munmap(ov, OVIRT_SIZE + OVIRT_HEADER_SIZE);
 		return NULL;
 	}
-//	curl_easy_setopt(ov->curl, CURLOPT_VERBOSE, verbose);
+	curl_easy_setopt(ov->curl, CURLOPT_VERBOSE, verbose);
 	curl_easy_setopt(ov->curl, CURLOPT_FOLLOWLOCATION, 1);
 	curl_easy_setopt(ov->curl, CURLOPT_READFUNCTION, upload);
 	curl_easy_setopt(ov->curl, CURLOPT_READDATA, ov);
@@ -138,7 +233,7 @@ struct ovirt * ovirt_init(const char *ohost, int verbose)
 	curl_easy_setopt(ov->curl, CURLOPT_ERRORBUFFER, ov->errmsg);
 	curl_easy_setopt(ov->curl, CURLOPT_USERAGENT, "Lenovo oVirt Agent 1.0");
 
-	ov->ocmd = INIT;
+	ov->auth = AUTH_NONE;
 	ov->version = 0;
 
 	return ov;
@@ -151,56 +246,121 @@ void ovirt_exit(struct ovirt *ov)
 	munmap(ov, OVIRT_SIZE + OVIRT_HEADER_SIZE);
 }
 
-static const char ovirt_api[] = "/ovirt-engine/api";
-static const char hd_basic_auth[] = "Authorization: Basic ";
-static const char hd_accept_xml[] = "Accept: application/xml";
+static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
+{
+	const char *json_id, *semi = NULL;
+	int len;
+
+	json_id = strstr(hdbuf, "JSESSIONID=");
+	if (json_id)
+		semi = strchr(json_id, ';');
+	if (!json_id || !semi) {
+		fprintf(stderr, "Invalid response from session logon.\n");
+		return 0;
+	}
+	len = semi - json_id;
+	strcpy(buf, "Cookie: ");
+	if (len + 8 < buflen) {
+		strncat(buf+8, json_id, len);
+		buf[len+8] = 0;
+	} else
+		fprintf(stderr, "Session Token ID too large.\n");
+	return len + 8;
+}
+
+static const char hd_prefer[] = "Prefer: persistent-auth";
+
+static int ovirt_session_logon(struct ovirt *ov)
+{
+	char uri[128];
+	struct curl_slist *header = NULL;
+	int len, retv = 0;
+
+	strcpy(uri, ov->engine);
+	strcat(uri, ovirt_api);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, uri);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_prefer);
+	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 1);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	ov->hdlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	ov->hdbuf[ov->hdlen] = 0;
+	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0);
+	curl_slist_free_all(header);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf) {
+		retv = -1;
+		fprintf(stderr, "Session logon failed.\n");
+		fprintf(stderr, "Token: %s\n", ov->token);
+	}
+	len = ovirt_session_cookie(ov->token, sizeof(ov->token), ov->hdbuf);
+	if (len > 0 && len < sizeof(ov->token))
+		ov->auth = AUTH_SESSION;
+	else
+		retv = -1;
+	return retv;
+}
+
 int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain)
 {
-	struct curl_slist *header = NULL;
-	int retv, len;
-	static const char pasfmt[] = "%s@%s:%s";
-	char passkey[96], *uri;
-	const char *dm;
-	struct ovirt_xml *oxml;
+	int retv = 0;
 
-	retv = 0;
-	if (domain == NULL || strlen(domain) == 0)
-		dm = "internal";
-	else
-		dm = domain;
-	header = curl_slist_append(header, hd_accept_xml);
-	if (ov->version < 4 || ov->ocmd == INIT) {
-		len = snprintf(passkey, 96, pasfmt, user, dm, pass);
-		if (retv >= 95)
-			fprintf(stderr, "Warning: ID token too long.\n");
-		len = bin2str_b64(ov->dndat, ov->max_dnlen,
-				(const unsigned char *)passkey, len);
-		strcpy(ov->token, hd_basic_auth);
-		strcat(ov->token, ov->dndat);
-		header = curl_slist_append(header, ov->token);
+	retv = ovirt_oauth_logon(ov, user, pass, domain);
+	if (retv != CURLE_OK) {
+	       	if (ov->version >= 4) {
+			fprintf(stderr, "oVirt Logon failed.\n");
+			return retv;
+		}
+		retv = ovirt_basic_logon(ov, user, pass, domain);
+		if (retv != CURLE_OK) {
+			fprintf(stderr, "oVirt Logon failed.\n");
+			return retv;
+		}
 	}
-	if (ov->ocmd == INIT) {
-		uri = passkey;
-		strcpy(uri, ov->engine);
-		strcat(uri, ovirt_api);
-		curl_easy_setopt(ov->curl, CURLOPT_URL, uri);
-		curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
-		ov->hdlen = 0;
-		ov->dnlen = 0;
-		ov->errmsg[0] = 0;
-		retv = curl_easy_perform(ov->curl);
-		if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf)
-			fprintf(stderr, "HTTP Error:\n%s\n", ov->hdbuf);
-		else {
-			oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
-			if (oxml) {
-				len = ovirt_xml_get(oxml, "/api/product_info/version/major",
-						ov->dndat, ov->dnlen);
-				printf("Version: %s\n", ov->dndat);
-				ov->ocmd = INIT_DONE;
-			}
-			ovirt_xml_exit(oxml);
+	ovirt_session_logon(ov);
+	return retv;
+}
+	
+int ovirt_init_version(struct ovirt *ov)
+{
+	struct ovirt_xml *oxml;
+	struct curl_slist *header = NULL;
+	char url[128];
+	int retv = -1, len;
+
+	strcpy(url, ov->engine);
+	strcat(url, ovirt_api);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, url);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_accept_xml);
+	header = curl_slist_append(header, hd_prefer);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	ov->dnlen = 0;
+	ov->hdlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	ov->dndat[ov->dnlen] = 0;
+	ov->hdbuf[ov->hdlen] = 0;
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf) {
+		if (strstr(ov->hdbuf, HTTP_UNAUTH) == ov->hdbuf)
+			retv = -11;
+		fprintf(stderr, "Operation failed:\n%s\n%s\n",
+				ov->hdbuf, ov->dndat);
+		fprintf(stderr, "Token: %s\n", ov->token);
+		return retv;
+	}
+	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
+	if (oxml) {
+		len = ovirt_xml_get(oxml, "/api/product_info/version/major",
+				ov->dndat, ov->max_dnlen);
+		ovirt_xml_exit(oxml);
+		if (len > 0 && len < ov->max_dnlen) {
+			retv = 0;
+			ov->version = atoi(ov->dndat);
 		}
 	}
 	return retv;
