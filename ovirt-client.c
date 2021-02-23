@@ -9,16 +9,10 @@
 #include "ovirt_xml.h"
 #include "ovirt-client.h"
 
-enum OVIRTCMD {
-	INIT = 0, INIT_DONE = 1, LOGON_SSO = 2, LOGON_SESSON = 3, GETVMS = 4,
-	GETCON = 5, GETVV = 6
-};
+static const unsigned short errnum = 0x1000;
 
 #define OVIRT_SIZE (4*1024*1024)
 #define OVIRT_HEADER_SIZE	(1024*1024)
-
-static const char HTTP_OK[] = "HTTP/1.1 200 OK";
-static const char HTTP_UNAUTH[] = "HTTP/1.1 401 Unauthorized";
 
 static size_t upload(char *buf, size_t siz, size_t nitems, void *usrdat)
 {
@@ -99,6 +93,23 @@ exit_10:
 	return retv;
 }
 
+static int http_check_status(const char *response)
+{
+	static const char HTTP_OK[] = "HTTP/1.1 200 OK";
+	static const char HTTP_UNAUTH[] = "HTTP/1.1 401 Unauthorized";
+
+	int retv = 0;
+
+	if (strstr(response, HTTP_OK) == response)
+		return retv;
+	if (strstr(response, HTTP_UNAUTH) == response) {
+		fprintf(stderr, "Unauthorized access.\n");
+		retv = -(errnum + 0x100);
+	} else
+		retv = -(errnum + 0x101);
+	return retv;
+}
+
 static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 		const char *pass, const char *domain)
 {
@@ -139,10 +150,10 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 	free(postdata);
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
-	if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf) {
-		fprintf(stderr, "OAUTH logon operation failed:\n%s\n%s\n",
-				ov->hdbuf, ov->dndat);
-		retv = -1;
+	retv = http_check_status(ov->hdbuf);
+	if (retv != 0) {
+		fprintf(stderr, "OAUTH logon operation failed.\n");
+		return retv;
 	}
 	retv = get_json_token(ov->token, sizeof(ov->token), ov->dndat);
 	if (retv >= 0)
@@ -190,10 +201,10 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 	ov->dndat[ov->dnlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0); 
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
-	if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf) {
-		fprintf(stderr, "oVirt basic logon operation:\n%s\n%s\n",
-				ov->hdbuf, ov->dndat);
-		retv = -1;
+	retv = http_check_status(ov->hdbuf);
+	if (retv != 0) {
+		fprintf(stderr, "oVirt basic logon operation failed.\n");
+		return retv;
 	}
 	ov->auth = AUTH_BASIC;
 	return retv;
@@ -290,16 +301,16 @@ static int ovirt_session_logon(struct ovirt *ov)
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0);
 	curl_slist_free_all(header);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
-	if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf) {
-		retv = -1;
+	retv = http_check_status(ov->hdbuf);
+	if (retv != 0) {
 		fprintf(stderr, "Session logon failed.\n");
-		fprintf(stderr, "Token: %s\n", ov->token);
+		return retv;
 	}
 	len = ovirt_session_cookie(ov->token, sizeof(ov->token), ov->hdbuf);
 	if (len > 0 && len < sizeof(ov->token))
 		ov->auth = AUTH_SESSION;
 	else
-		retv = -1;
+		retv = -(errnum + 0x105);
 	return retv;
 }
 
@@ -308,19 +319,22 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 {
 	int retv = 0;
 
-	retv = ovirt_oauth_logon(ov, user, pass, domain);
-	if (retv != CURLE_OK) {
-	       	if (ov->version >= 4) {
-			fprintf(stderr, "oVirt Logon failed.\n");
+	ov->auth = 0;
+	if (ov->version >= 4 || ov->version == 0) {
+		retv = ovirt_oauth_logon(ov, user, pass, domain);
+		if (retv == CURLE_OK)
 			return retv;
-		}
-		retv = ovirt_basic_logon(ov, user, pass, domain);
-		if (retv != CURLE_OK) {
+		if (ov->version != 0) {
 			fprintf(stderr, "oVirt Logon failed.\n");
 			return retv;
 		}
 	}
-	ovirt_session_logon(ov);
+	retv = ovirt_basic_logon(ov, user, pass, domain);
+	if (retv != CURLE_OK) {
+		fprintf(stderr, "oVirt Logon failed.\n");
+		return retv;
+	}
+	retv = ovirt_session_logon(ov);
 	return retv;
 }
 	
@@ -345,12 +359,9 @@ int ovirt_init_version(struct ovirt *ov)
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
-	if (strstr(ov->hdbuf, HTTP_OK) != ov->hdbuf) {
-		if (strstr(ov->hdbuf, HTTP_UNAUTH) == ov->hdbuf)
-			retv = -11;
-		fprintf(stderr, "Operation failed:\n%s\n%s\n",
-				ov->hdbuf, ov->dndat);
-		fprintf(stderr, "Token: %s\n", ov->token);
+	retv = http_check_status(ov->hdbuf);
+	if (retv != 0) {
+		fprintf(stderr, "Failed to logon session.\n");
 		return retv;
 	}
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
@@ -363,5 +374,30 @@ int ovirt_init_version(struct ovirt *ov)
 			ov->version = atoi(ov->dndat);
 		}
 	}
+	return retv;
+}
+
+static const char ovirt_vms[] = "/ovirt-engine/api/vms";
+
+int ovirt_list_vms(struct ovirt *ov)
+{
+	struct curl_slist *header = NULL;
+	char url[128];
+	int retv;
+
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_accept_xml);
+	header = curl_slist_append(header, hd_prefer);
+	strcpy(url, ov->engine);
+	strcat(url, ovirt_vms);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, url);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	ov->dndat[ov->dnlen] = 0;
+	ov->hdbuf[ov->hdlen] = 0;
+	retv = http_check_status(ov->hdbuf);
 	return retv;
 }

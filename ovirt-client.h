@@ -31,5 +31,6 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain);
 
 int ovirt_init_version(struct ovirt *ov);
+int ovirt_list_vms(struct ovirt *ov);
 
 #endif /* OVIRT_CLIENT_DSCAO__ */
