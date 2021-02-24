@@ -15,6 +15,7 @@
 static const unsigned short err_base = 0x1000;
 static const unsigned short err_unauth = 0x100;
 static const unsigned short err_other = 0x199;
+static const unsigned short err_overflow = 0x105;
 
 #define OVIRT_SIZE (4*1024*1024)
 #define OVIRT_HEADER_SIZE	(1024*1024)
@@ -287,6 +288,7 @@ static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
 }
 
 static const char hd_prefer[] = "Prefer: persistent-auth";
+static const char hd_content_xml[] = "Content-Type: application/xml";
 
 static int ovirt_session_logon(struct ovirt *ov)
 {
@@ -475,4 +477,95 @@ int ovirt_list_vms(struct ovirt *ov, char ***vmids)
 		return retv;
 	numvms = xml_getvms(ov->dndat, ov->dnlen, vmids);
 	return numvms;
+}
+
+static int match_vm_status(const char *st)
+{
+	static const char *vm_states[] = {
+		"wait_for_launch", "down", "powering_down", "powering_up",
+		"up", NULL
+	};
+	int idx;
+
+	idx = 0;
+	while (vm_states[idx]) {
+		if (strcmp(st, vm_states[idx]) == 0)
+			break;
+		idx += 1;
+	}
+	if (vm_states[idx])
+		return idx;
+	else
+		return -1;
+}
+
+static int ovirt_vm_getstate(struct ovirt *ov, const char *vmref)
+{
+	struct curl_slist *header = NULL;
+	char url[128], vmstat[16];
+	int retv = -1, len;
+	struct ovirt_xml *oxml;
+
+	strcpy(url, ov->engine);
+	strcat(url, vmref);
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_accept_xml);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	curl_easy_setopt(ov->curl, CURLOPT_URL, url);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	curl_easy_perform(ov->curl);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	curl_slist_free_all(header);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (retv < 0)
+		return retv;
+	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
+	if (!oxml)
+		return retv;
+	strcpy(url, "/vm/status");
+	len = xmlget_value(oxml, url, vmstat, sizeof(vmstat));
+	if (len > sizeof(vmstat) - 1) {
+		fprintf(stderr, "xmlget_value buffer overflow.\n");
+		return -(err_base + err_overflow);
+	}
+	vmstat[len] = 0;
+	return match_vm_status(vmstat);
+}
+
+int ovirt_vm_action(struct ovirt *ov, const char *vmref, const char *action)
+{
+	struct curl_slist *header = NULL;
+	char url[128], vmaction[16];
+	int retv;
+
+	if (strcmp(action, "status") == 0)
+		return ovirt_vm_getstate(ov, vmref);
+
+	strcpy(vmaction, "<action/>");
+	strcpy(url, ov->engine);
+	strcat(url, vmref);
+	strcat(url, "/");
+	strcat(url, action);
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_content_xml);
+	header = curl_slist_append(header, hd_accept_xml);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	curl_easy_setopt(ov->curl, CURLOPT_URL, url);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, vmaction);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, strlen(vmaction));
+	curl_easy_perform(ov->curl);
+	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	curl_slist_free_all(header);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	return retv;
 }
