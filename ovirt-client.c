@@ -5,11 +5,16 @@
 #include <jansson.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
+#include <assert.h>
 #include "base64.h"
 #include "ovirt_xml.h"
 #include "ovirt-client.h"
 
-static const unsigned short errnum = 0x1000;
+#define ENOMEM	0x2000
+
+static const unsigned short err_base = 0x1000;
+static const unsigned short err_unauth = 0x100;
+static const unsigned short err_other = 0x199;
 
 #define OVIRT_SIZE (4*1024*1024)
 #define OVIRT_HEADER_SIZE	(1024*1024)
@@ -93,7 +98,7 @@ exit_10:
 	return retv;
 }
 
-static int http_check_status(const char *response)
+static int http_check_status(const char *response, const char *msgbody)
 {
 	static const char HTTP_OK[] = "HTTP/1.1 200 OK";
 	static const char HTTP_UNAUTH[] = "HTTP/1.1 401 Unauthorized";
@@ -104,9 +109,10 @@ static int http_check_status(const char *response)
 		return retv;
 	if (strstr(response, HTTP_UNAUTH) == response) {
 		fprintf(stderr, "Unauthorized access.\n");
-		retv = -(errnum + 0x100);
+		retv = -(err_base + err_unauth);
 	} else
-		retv = -(errnum + 0x101);
+		retv = -(err_base + err_other);
+	fprintf(stderr, "%s\n%s\n", response, msgbody);
 	return retv;
 }
 
@@ -150,9 +156,10 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 	free(postdata);
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
-	retv = http_check_status(ov->hdbuf);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "OAUTH logon operation failed.\n");
+		fprintf(stderr, "%s\n", ov->dndat);
 		return retv;
 	}
 	retv = get_json_token(ov->token, sizeof(ov->token), ov->dndat);
@@ -201,7 +208,7 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 	ov->dndat[ov->dnlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0); 
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
-	retv = http_check_status(ov->hdbuf);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "oVirt basic logon operation failed.\n");
 		return retv;
@@ -301,7 +308,7 @@ static int ovirt_session_logon(struct ovirt *ov)
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0);
 	curl_slist_free_all(header);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
-	retv = http_check_status(ov->hdbuf);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "Session logon failed.\n");
 		return retv;
@@ -310,26 +317,27 @@ static int ovirt_session_logon(struct ovirt *ov)
 	if (len > 0 && len < sizeof(ov->token))
 		ov->auth = AUTH_SESSION;
 	else
-		retv = -(errnum + 0x105);
+		retv = -(err_base + 0x105);
 	return retv;
 }
 
 int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain)
 {
-	int retv = 0;
+	int retv = 0, passed = 0;
 
 	ov->auth = 0;
 	if (ov->version >= 4 || ov->version == 0) {
 		retv = ovirt_oauth_logon(ov, user, pass, domain);
 		if (retv == CURLE_OK)
-			return retv;
-		if (ov->version != 0) {
+			passed = 1;
+		else if (ov->version != 0) {
 			fprintf(stderr, "oVirt Logon failed.\n");
 			return retv;
 		}
 	}
-	retv = ovirt_basic_logon(ov, user, pass, domain);
+	if (passed == 0)
+		retv = ovirt_basic_logon(ov, user, pass, domain);
 	if (retv != CURLE_OK) {
 		fprintf(stderr, "oVirt Logon failed.\n");
 		return retv;
@@ -359,14 +367,14 @@ int ovirt_init_version(struct ovirt *ov)
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
-	retv = http_check_status(ov->hdbuf);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "Failed to logon session.\n");
 		return retv;
 	}
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
 	if (oxml) {
-		len = ovirt_xml_get(oxml, "/api/product_info/version/major",
+		len = xmlget_value(oxml, "/api/product_info/version/major",
 				ov->dndat, ov->max_dnlen);
 		ovirt_xml_exit(oxml);
 		if (len > 0 && len < ov->max_dnlen) {
@@ -377,14 +385,77 @@ int ovirt_init_version(struct ovirt *ov)
 	return retv;
 }
 
+static int xml_getvms(const char *xmlstr, int len, char ***vmids)
+{
+	struct ovirt_xml *oxml;
+	xmlNode *node;
+	xmlAttr	*prop;
+	int numvms = 0, i, retv;
+	char **ids, **cur_id;
+	static const char xpath[] = "/vms/vm";
+
+	retv = 0;
+	*vmids = NULL;
+	oxml = ovirt_xml_init(xmlstr, len);
+	if (!oxml)
+		return 0;
+	node = xml_search_element(oxml, xpath);
+	while (node) {
+		numvms += 1;
+		node = xml_next_element(node);
+	}
+	ids = malloc(sizeof(char *)*(numvms+1));
+	if (!ids) {
+		fprintf(stderr, "Out of Memory.\n");
+		retv = -ENOMEM;
+		goto exit_10;
+	}
+	memset(ids, 0, sizeof(char *)*(numvms+1));
+
+	node = xml_search_element(oxml, xpath);
+	for (cur_id = ids, i = 0; i < numvms && node; i++, cur_id++) {
+		prop = node->properties;
+		assert(prop->type == XML_ATTRIBUTE_NODE);
+		while (prop) {
+			if (prop->name)
+				if (strcmp((const char *)prop->name, "href") == 0)
+					break;
+			prop = prop->next;
+		}
+		if (!prop) {
+			fprintf(stderr, "Bad xml, no properties: %s\n", xpath);
+			retv = -(err_base + 0x201);
+			goto exit_10;
+		}
+		len = strlen((const char *)prop->children->content);
+		*cur_id = malloc(len+1);
+		if (!(*cur_id)) {
+			fprintf(stderr, "Out of memory.\n");
+			retv = -ENOMEM;
+			goto exit_10;
+		}
+		strcpy(*cur_id, (const char *)prop->children->content);
+		node = xml_next_element(node);
+	}
+	retv = numvms;
+	*vmids = ids;
+
+exit_10:
+	if (retv < 0 && ids)
+		ovirt_free_list(ids);
+	ovirt_xml_exit(oxml);
+	return retv;
+}
+
 static const char ovirt_vms[] = "/ovirt-engine/api/vms";
 
-int ovirt_list_vms(struct ovirt *ov)
+int ovirt_list_vms(struct ovirt *ov, char ***vmids)
 {
 	struct curl_slist *header = NULL;
 	char url[128];
-	int retv;
+	int retv, numvms;
 
+	*vmids = NULL;
 	header = curl_slist_append(header, ov->token);
 	header = curl_slist_append(header, hd_accept_xml);
 	header = curl_slist_append(header, hd_prefer);
@@ -398,6 +469,10 @@ int ovirt_list_vms(struct ovirt *ov)
 	curl_easy_perform(ov->curl);
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
-	retv = http_check_status(ov->hdbuf);
-	return retv;
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (retv != 0)
+		return retv;
+	numvms = xml_getvms(ov->dndat, ov->dnlen, vmids);
+	return numvms;
 }

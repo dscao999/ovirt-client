@@ -27,10 +27,19 @@ static inline void ovirt_set_verbose(struct ovirt *ov, int verbose)
 	curl_easy_setopt(ov->curl, CURLOPT_VERBOSE, verbose);
 }
 
+static inline void ovirt_free_list(char **list)
+{
+	void *tmp = list;
+
+	while (*list)
+		free(*list++);
+	free(tmp);
+}
+
 int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain);
 
 int ovirt_init_version(struct ovirt *ov);
-int ovirt_list_vms(struct ovirt *ov);
+int ovirt_list_vms(struct ovirt *ov, char ***vmids);
 
 #endif /* OVIRT_CLIENT_DSCAO__ */

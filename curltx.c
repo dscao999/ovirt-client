@@ -1,13 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <locale.h>
+#include <assert.h>
 #include "ovirt-client.h"
 
 int main(int argc, char *argv[])
 {
 	struct ovirt *ov;
 	const char *username, *pass;
-	int retv, verbose = 0;
+	int retv, verbose = 0, num;
+	char **vmids, **vmid;
 
 	if (argc > 1)
 		username = argv[1];
@@ -34,8 +36,17 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Cannot Init version\n");
 		goto exit_10;
 	}
-	retv = ovirt_list_vms(ov);
-	printf("%s\n", ov->dndat);
+	num = ovirt_list_vms(ov, &vmids);
+	if (num < 0) {
+		retv = 5;
+		assert(vmids == NULL);
+		goto exit_10;
+	}
+	vmid = vmids;
+	while (*vmid)
+		printf("vms: %s\n", *vmid++);
+	printf("Number of VMs: %d\n", num);
+	ovirt_free_list(vmids);
 exit_10:
 	ovirt_exit(ov);
 	return retv;

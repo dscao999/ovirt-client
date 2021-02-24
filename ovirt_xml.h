@@ -18,7 +18,23 @@ static inline void ovirt_xml_exit(struct ovirt_xml *oxml)
 	xmlCleanupParser();
 }
 
-int ovirt_xml_get(struct ovirt_xml *oxml, const char *xpath,
+static inline xmlNode * xml_next_element(xmlNode *node)
+{
+	if (!node)
+		return NULL;
+
+	node = node->next;
+	while (node) {
+		if (node->type == XML_ELEMENT_NODE)
+			break;
+		node = node->next;
+	}
+	return node;
+}
+
+xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath);
+
+int xmlget_value(struct ovirt_xml *oxml, const char *xpath,
 		char *buf, int len);
 
 #endif /* OVIRT_XML_DSCAO__ */

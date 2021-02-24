@@ -53,7 +53,7 @@ static xmlNode * search_siblings(xmlNode *node, const char *nname)
 	return cur;
 }
 
-static xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath)
+xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath)
 {
 	xmlNode *cur = NULL, *found;
 	char *pbuf, *nname;
@@ -75,13 +75,15 @@ static xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath)
 	return found;
 }
 
-int ovirt_xml_get(struct ovirt_xml *oxml, const char *xpath, char *buf, int buflen)
+int xmlget_value(struct ovirt_xml *oxml, const char *xpath, char *buf, int buflen)
 {
 	xmlNode *node;
 	int len;
 
 	node = xml_search_element(oxml, xpath);
-	if (!node)
+	if (!node || !node->children || !node->children->content)
+		return 0;
+	if (strcmp((const char *)node->children->name, "text") != 0)
 		return 0;
 	len = strlen((const char *)node->children->content);
 	if (len < buflen)
