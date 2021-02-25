@@ -54,6 +54,7 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
+cscope.files
 # core file
 core
 # executables of this project

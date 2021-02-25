@@ -16,6 +16,9 @@ static const unsigned short err_base = 0x1000;
 static const unsigned short err_unauth = 0x100;
 static const unsigned short err_other = 0x199;
 static const unsigned short err_overflow = 0x105;
+static const unsigned short err_auth_invalid = 0x106;
+static const unsigned short err_no_auth = 0x107;
+static const unsigned short err_no_jsonid = 0x108;
 
 #define OVIRT_SIZE (4*1024*1024)
 #define OVIRT_HEADER_SIZE	(1024*1024)
@@ -76,19 +79,19 @@ static int get_json_token(char *buf, int buflen, const char *jtxt)
 
 	root = json_loads(jtxt, 0, &jerr);
 	if (!root) {
-		fprintf(stderr, "OAUTH Response Invalid: %s\n", jerr.text);
-		return -1;
+		fprintf(stderr, "OAUTH Response is not valid: %s\n", jerr.text);
+		return -(err_base + err_auth_invalid);
 	}
 	token = json_object_get(root, "access_token");
 	if (!json_is_string(token)) {
 		fprintf(stderr, "OAUTH Response missing \"access_token\".\n");
-		retv = -2;
+		retv = -(err_base + err_no_auth);
 		goto exit_10;
 	}
 	token_str = json_string_value(token);
-	if (strlen(token_str) > buflen - 24) {
+	if (strlen(token_str) > buflen - 22) {
 		fprintf(stderr, "Buffer overflow in get_json_token.\n");
-		retv = -3;
+		retv = -(err_base + err_overflow);
 		goto exit_10;
 	}
 	strcpy(buf, "Authorization: Bearer ");
@@ -123,31 +126,29 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 	static const char sso_path[] = "/ovirt-engine/sso/oauth/token";
 	static const char sso_param[] = "grant_type=password&" \
 			"scope=ovirt-app-api&username=%s@%s&password=%s";
-	static const char achd_json[] = "Accept: application/json";
+	static const char hd_accept_json[] = "Accept: application/json";
 	const char *dom;
-        char url[128];
 	char *postdata;
 	struct curl_slist *header = NULL;
 	int retv;
 
-	strcpy(url, ov->engine);
-	strcat(url, sso_path);
-	curl_easy_setopt(ov->curl, CURLOPT_URL, url);
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, sso_path);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	if (domain == NULL || strlen(domain) == 0)
 		dom = "internal";
 	else
 		dom = domain;
 	ov->uplen = snprintf(ov->updat, sizeof(ov->updat), sso_param, user,
 			dom, pass);
-	if (ov->uplen == sizeof(ov->updat) - 1)
-		fprintf(stderr, "Warning: sso param may have overflowed" \
-			       " the buffer.\n");
-	postdata = malloc(strlen(ov->updat+1));
+	assert(ov->uplen < sizeof(ov->updat) -1);
+	postdata = malloc(strlen(ov->updat)+1);
 	strcpy(postdata, ov->updat);
-	header = curl_slist_append(header, achd_json);
+	header = curl_slist_append(header, hd_accept_json);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, strlen(postdata));
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, postdata); 
+	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
 	retv = curl_easy_perform(ov->curl);
@@ -160,7 +161,6 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "OAUTH logon operation failed.\n");
-		fprintf(stderr, "%s\n", ov->dndat);
 		return retv;
 	}
 	retv = get_json_token(ov->token, sizeof(ov->token), ov->dndat);
@@ -178,7 +178,6 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 {
 	struct curl_slist *header = NULL;
 	static const char pasfmt[] = "%s@%s:%s";
-	char passkey[96], *uri;
 	const char *dm;
 	int len, retv;
 
@@ -186,29 +185,28 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 		dm = "internal";
 	else
 		dm = domain;
-	len = snprintf(passkey, 96, pasfmt, user, dm, pass);
-	if (len >= 95)
-		fprintf(stderr, "Warning: ID token too long.\n");
+	len = sprintf(ov->updat, pasfmt, user, dm, pass);
+	assert(len < sizeof(ov->updat));
 	len = bin2str_b64(ov->dndat, ov->max_dnlen,
-			(const unsigned char *)passkey, len);
+			(const unsigned char *)ov->updat, len);
+	ov->dndat[len] = 0;
 	strcpy(ov->token, hd_basic_auth);
 	strcat(ov->token, ov->dndat);
 	header = curl_slist_append(header, ov->token);
-	uri = passkey;
-	strcpy(uri, ov->engine);
-	strcat(uri, ovirt_api);
-	curl_easy_setopt(ov->curl, CURLOPT_URL, uri);
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, ovirt_api);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 1); 
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
 	retv = curl_easy_perform(ov->curl);
-	curl_slist_free_all(header);
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0); 
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "oVirt basic logon operation failed.\n");
@@ -275,7 +273,7 @@ static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
 		semi = strchr(json_id, ';');
 	if (!json_id || !semi) {
 		fprintf(stderr, "Invalid response from session logon.\n");
-		return 0;
+		return -(err_base + err_no_jsonid);
 	}
 	len = semi - json_id;
 	strcpy(buf, "Cookie: ");
@@ -284,7 +282,7 @@ static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
 		buf[len+8] = 0;
 	} else
 		fprintf(stderr, "Session Token ID too large.\n");
-	return len + 8;
+	return (len + 8);
 }
 
 static const char hd_prefer[] = "Prefer: persistent-auth";
@@ -292,21 +290,22 @@ static const char hd_content_xml[] = "Content-Type: application/xml";
 
 static int ovirt_session_logon(struct ovirt *ov)
 {
-	char uri[128];
 	struct curl_slist *header = NULL;
 	int len, retv = 0;
 
-	strcpy(uri, ov->engine);
-	strcat(uri, ovirt_api);
-	curl_easy_setopt(ov->curl, CURLOPT_URL, uri);
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, ovirt_api);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	header = curl_slist_append(header, ov->token);
 	header = curl_slist_append(header, hd_prefer);
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 1);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	ov->hdlen = 0;
+	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
 	curl_easy_perform(ov->curl);
 	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0);
 	curl_slist_free_all(header);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
@@ -352,12 +351,11 @@ int ovirt_init_version(struct ovirt *ov)
 {
 	struct ovirt_xml *oxml;
 	struct curl_slist *header = NULL;
-	char url[128];
-	int retv = -1, len;
+	int retv, len;
 
-	strcpy(url, ov->engine);
-	strcat(url, ovirt_api);
-	curl_easy_setopt(ov->curl, CURLOPT_URL, url);
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, ovirt_api);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	header = curl_slist_append(header, ov->token);
 	header = curl_slist_append(header, hd_accept_xml);
 	header = curl_slist_append(header, hd_prefer);
@@ -371,7 +369,7 @@ int ovirt_init_version(struct ovirt *ov)
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
-		fprintf(stderr, "Failed to logon session.\n");
+		fprintf(stderr, "session logon failed.\n");
 		return retv;
 	}
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
@@ -387,83 +385,57 @@ int ovirt_init_version(struct ovirt *ov)
 	return retv;
 }
 
-static int xml_getvms(const char *xmlstr, int len, char ***vmids)
+static void copy_attribute(xmlAttr *prop, struct ovirt_vm *vm)
+{
+	while (prop) {
+		assert(prop->type == XML_ATTRIBUTE_NODE && prop->name);
+		if (strcmp((const char *)prop->name, "href") == 0)
+			strcpy(vm->href, (const char *)prop->children->content);
+		else if (strcmp((const char *)prop->name, "id") == 0)
+			strcpy(vm->id, (const char *)prop->children->content);
+		prop = prop->next;
+	}
+}
+
+static int xml_getvms(const char *xmlstr, int len, struct ovirt_vm *vms, int num)
 {
 	struct ovirt_xml *oxml;
 	xmlNode *node;
 	xmlAttr	*prop;
-	int numvms = 0, i, retv;
-	char **ids, **cur_id;
+	int numvms;
+	struct ovirt_vm *curvm = vms;
 	static const char xpath[] = "/vms/vm";
 
-	retv = 0;
-	*vmids = NULL;
 	oxml = ovirt_xml_init(xmlstr, len);
 	if (!oxml)
 		return 0;
 	node = xml_search_element(oxml, xpath);
+	numvms = 0;
 	while (node) {
+		prop = node->properties;
+		if (curvm && numvms < num) {
+			copy_attribute(prop, curvm);
+			curvm++;
+		}
 		numvms += 1;
 		node = xml_next_element(node);
 	}
-	ids = malloc(sizeof(char *)*(numvms+1));
-	if (!ids) {
-		fprintf(stderr, "Out of Memory.\n");
-		retv = -ENOMEM;
-		goto exit_10;
-	}
-	memset(ids, 0, sizeof(char *)*(numvms+1));
-
-	node = xml_search_element(oxml, xpath);
-	for (cur_id = ids, i = 0; i < numvms && node; i++, cur_id++) {
-		prop = node->properties;
-		assert(prop->type == XML_ATTRIBUTE_NODE);
-		while (prop) {
-			if (prop->name)
-				if (strcmp((const char *)prop->name, "href") == 0)
-					break;
-			prop = prop->next;
-		}
-		if (!prop) {
-			fprintf(stderr, "Bad xml, no properties: %s\n", xpath);
-			retv = -(err_base + 0x201);
-			goto exit_10;
-		}
-		len = strlen((const char *)prop->children->content);
-		*cur_id = malloc(len+1);
-		if (!(*cur_id)) {
-			fprintf(stderr, "Out of memory.\n");
-			retv = -ENOMEM;
-			goto exit_10;
-		}
-		strcpy(*cur_id, (const char *)prop->children->content);
-		node = xml_next_element(node);
-	}
-	retv = numvms;
-	*vmids = ids;
-
-exit_10:
-	if (retv < 0 && ids)
-		ovirt_free_list(ids);
-	ovirt_xml_exit(oxml);
-	return retv;
+	return numvms;
 }
 
 static const char ovirt_vms[] = "/ovirt-engine/api/vms";
 
-int ovirt_list_vms(struct ovirt *ov, char ***vmids)
+int ovirt_list_vms(struct ovirt *ov, struct ovirt_vm **vms)
 {
 	struct curl_slist *header = NULL;
-	char url[128];
 	int retv, numvms;
 
-	*vmids = NULL;
 	header = curl_slist_append(header, ov->token);
 	header = curl_slist_append(header, hd_accept_xml);
 	header = curl_slist_append(header, hd_prefer);
-	strcpy(url, ov->engine);
-	strcat(url, ovirt_vms);
-	curl_easy_setopt(ov->curl, CURLOPT_URL, url);
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, ovirt_vms);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	ov->hdlen = 0;
 	ov->dnlen = 0;
@@ -473,9 +445,17 @@ int ovirt_list_vms(struct ovirt *ov, char ***vmids)
 	ov->hdbuf[ov->hdlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
-	if (retv != 0)
+	if (retv != 0) {
+		fprintf(stderr, "Cannot list VMs.\n");
 		return retv;
-	numvms = xml_getvms(ov->dndat, ov->dnlen, vmids);
+	}
+	numvms = xml_getvms(ov->dndat, ov->dnlen, NULL, 0);
+	*vms = malloc(numvms*sizeof(struct ovirt_vm));
+	if (!(*vms)) {
+		fprintf(stderr, "Out of Memory.\n");
+		return -ENOMEM;
+	}
+	xml_getvms(ov->dndat, ov->dnlen, *vms, numvms);
 	return numvms;
 }
 
@@ -499,21 +479,21 @@ static int match_vm_status(const char *st)
 		return -1;
 }
 
-static int ovirt_vm_getstate(struct ovirt *ov, const char *vmref)
+static int ovirt_vm_getstate(struct ovirt *ov, struct ovirt_vm *vm)
 {
 	struct curl_slist *header = NULL;
-	char url[128], vmstat[16];
 	int retv = -1, len;
 	struct ovirt_xml *oxml;
 
-	strcpy(url, ov->engine);
-	strcat(url, vmref);
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, vm->href);
 	header = curl_slist_append(header, hd_prefer);
 	header = curl_slist_append(header, ov->token);
 	header = curl_slist_append(header, hd_accept_xml);
 	ov->hdlen = 0;
 	ov->dnlen = 0;
-	curl_easy_setopt(ov->curl, CURLOPT_URL, url);
+	ov->errmsg[0] = 0;
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	curl_easy_perform(ov->curl);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
@@ -526,37 +506,34 @@ static int ovirt_vm_getstate(struct ovirt *ov, const char *vmref)
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
 	if (!oxml)
 		return retv;
-	strcpy(url, "/vm/status");
-	len = xmlget_value(oxml, url, vmstat, sizeof(vmstat));
-	if (len > sizeof(vmstat) - 1) {
-		fprintf(stderr, "xmlget_value buffer overflow.\n");
-		return -(err_base + err_overflow);
-	}
-	vmstat[len] = 0;
-	return match_vm_status(vmstat);
+	len = xmlget_value(oxml, "/vm/status", vm->state, sizeof(vm->state));
+	assert(len < sizeof(vm->state));
+	vm->state[len] = 0;
+	return match_vm_status(vm->state);
 }
 
-int ovirt_vm_action(struct ovirt *ov, const char *vmref, const char *action)
+int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 {
 	struct curl_slist *header = NULL;
-	char url[128], vmaction[16];
+	char vmaction[16];
 	int retv;
 
 	if (strcmp(action, "status") == 0)
-		return ovirt_vm_getstate(ov, vmref);
+		return ovirt_vm_getstate(ov, vm);
 
 	strcpy(vmaction, "<action/>");
-	strcpy(url, ov->engine);
-	strcat(url, vmref);
-	strcat(url, "/");
-	strcat(url, action);
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, vm->href);
+	strcat(ov->uri, "/");
+	strcat(ov->uri, action);
 	header = curl_slist_append(header, hd_prefer);
 	header = curl_slist_append(header, ov->token);
 	header = curl_slist_append(header, hd_content_xml);
 	header = curl_slist_append(header, hd_accept_xml);
 	ov->hdlen = 0;
 	ov->dnlen = 0;
-	curl_easy_setopt(ov->curl, CURLOPT_URL, url);
+	ov->errmsg[0] = 0;
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, vmaction);
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, strlen(vmaction));

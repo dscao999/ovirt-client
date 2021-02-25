@@ -11,8 +11,8 @@ int main(int argc, char *argv[])
 	struct ovirt *ov;
 	const char *username, *pass, *action;
 	int retv, verbose = 0, num;
-	char **vmids, **vmid;
-	int status, compcode;
+	int status, compcode, i;
+	struct ovirt_vm *vms, *curvm;
 
 	if (argc > 1)
 		username = argv[1];
@@ -43,34 +43,29 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Cannot Init version\n");
 		goto exit_10;
 	}
-	num = ovirt_list_vms(ov, &vmids);
-	if (num < 0) {
-		retv = 5;
-		assert(vmids == NULL);
-		goto exit_10;
-	}
-	vmid = vmids;
-	while (*vmid) {
-		compcode = 0;
+	num = ovirt_list_vms(ov, &vms);
+	curvm = vms;
+	for (curvm = vms, i = 0; i < num; i++, curvm++) {
 		if (strcmp(action, "start") == 0)
 			compcode = 4;
 		else if (strcmp(action, "shutdown") == 0 || 
 				strcmp(action, "stop") == 0)
 			compcode = 1;
-		status = ovirt_vm_action(ov, *vmid, action);
-		if (compcode) {
+		else if (strcmp(action, "status") == 0)
+			compcode = 0;
+		status = ovirt_vm_action(ov, curvm, action);
+		if (compcode != 0) {
 			do {
 				sleep(3);
-				status = ovirt_vm_action(ov, *vmid, "status");
+				status = ovirt_vm_action(ov, curvm, "status");
 				printf("VM Status: %d\n", status);
 			} while (status != compcode);
 		} else {
 			printf("VM State: %d\n", status);
 		}
 
-		vmid++;
 	}
-	ovirt_free_list(vmids);
+	free(vms);
 
 exit_10:
 	ovirt_exit(ov);
