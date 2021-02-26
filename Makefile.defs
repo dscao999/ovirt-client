@@ -1,9 +1,14 @@
 #
 # common definitions for header dependency
 # 
+PHONY: header_clean
+
 %.o: %.c
 	$(COMPILE.c) -MMD -MP $< -o $@
 
 srcs = $(wildcard *.c)
 header_deps = $(srcs:.c=.d)
 -include $(header_deps)
+
+clean_header:
+	rm -f *.d

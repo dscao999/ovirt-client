@@ -40,7 +40,7 @@ err_10:
 	return NULL;
 }
 
-static xmlNode * search_siblings(xmlNode *node, const char *nname)
+xmlNode * xml_search_siblings(xmlNode *node, const char *nname)
 {
 	xmlNode *cur = node;
 
@@ -65,7 +65,7 @@ xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath)
 	found = cur;
 	nname = strtok(pbuf, "/");
 	while (nname) {
-		found = search_siblings(cur, nname);
+		found = xml_search_siblings(cur, nname);
 		if (!found)
 			break;
 		nname = strtok(NULL, "/");

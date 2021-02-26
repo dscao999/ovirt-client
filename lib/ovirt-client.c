@@ -6,13 +6,14 @@
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #include <assert.h>
+#include <errno.h>
 #include "base64.h"
 #include "ovirt_xml.h"
 #include "ovirt-client.h"
 
-#define ENOMEM	0x2000
-
 static const unsigned short err_base = 0x1000;
+static const unsigned short err_file = 0x10;
+static const unsigned short err_download = 0x11;
 static const unsigned short err_unauth = 0x100;
 static const unsigned short err_other = 0x199;
 static const unsigned short err_overflow = 0x105;
@@ -385,23 +386,33 @@ int ovirt_init_version(struct ovirt *ov)
 	return retv;
 }
 
-static void copy_attribute(xmlAttr *prop, struct ovirt_vm *vm)
+static int get_node_attribute(xmlNode *node, const char *attr_id,
+		char *buf, int maxlen)
 {
+	const char *val;
+	xmlAttr *prop;
+	int len;
+
+	len = 0;
+	prop = node->properties;
 	while (prop) {
 		assert(prop->type == XML_ATTRIBUTE_NODE && prop->name);
-		if (strcmp((const char *)prop->name, "href") == 0)
-			strcpy(vm->href, (const char *)prop->children->content);
-		else if (strcmp((const char *)prop->name, "id") == 0)
-			strcpy(vm->id, (const char *)prop->children->content);
+		val = (const char *)prop->children->content;
+		if (strcmp((const char *)prop->name, attr_id) == 0) {
+			len = strlen(val);
+			if (len < maxlen)
+				strcpy(buf, val);
+			break;
+		}
 		prop = prop->next;
 	}
+	return len;
 }
 
 static int xml_getvms(const char *xmlstr, int len, struct ovirt_vm *vms, int num)
 {
 	struct ovirt_xml *oxml;
 	xmlNode *node;
-	xmlAttr	*prop;
 	int numvms;
 	struct ovirt_vm *curvm = vms;
 	static const char xpath[] = "/vms/vm";
@@ -412,9 +423,13 @@ static int xml_getvms(const char *xmlstr, int len, struct ovirt_vm *vms, int num
 	node = xml_search_element(oxml, xpath);
 	numvms = 0;
 	while (node) {
-		prop = node->properties;
 		if (curvm && numvms < num) {
-			copy_attribute(prop, curvm);
+			len = get_node_attribute(node, "href",
+					curvm->href, sizeof(curvm->href));
+			assert(len < sizeof(curvm->href));
+			len = get_node_attribute(node, "id",
+					curvm->id, sizeof(curvm->id));
+			assert(len < sizeof(curvm->id));
 			curvm++;
 		}
 		numvms += 1;
@@ -512,13 +527,13 @@ static int ovirt_vm_getstate(struct ovirt *ov, struct ovirt_vm *vm)
 	return match_vm_status(vm->state);
 }
 
+static const char action_empty[] = "<action/>";
+static const int action_empty_len = 9;
 
 int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 {
 	struct curl_slist *header = NULL;
 	int retv;
-	static const char action_empty[] = "<action/>";
-	static const int action_empty_len = 9;
 
 	if (strcmp(action, "status") == 0)
 		return ovirt_vm_getstate(ov, vm);
@@ -545,5 +560,130 @@ int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
 	retv = http_check_status(ov->hdbuf, ov->dndat);
+	return retv;
+}
+
+static int xml_get_conlink(const char *xmlbuf, int len,
+		char *conlink, int maxlen)
+{
+	struct ovirt_xml *oxml;
+	int conlen;
+	xmlNode *node, *proto;
+
+	conlen = 0;
+	oxml = ovirt_xml_init(xmlbuf, len);
+	if (!oxml)
+		return conlen;
+	node = xml_search_element(oxml, "/graphics_consoles/graphics_console");
+	if (!node) {
+		fprintf(stderr, "No graphics console information.\n");
+		goto exit_10;
+	}
+
+	do {
+		proto = xml_search_siblings(node->children, "protocol");
+		if (strcmp((const char *)proto->children->content, "spice") == 0)
+			break;
+		node = xml_next_element(node);
+	} while (node);
+	if (!node) {
+		fprintf(stderr, "No spice graphics console information.\n");
+		goto exit_10;
+	}
+	conlen = get_node_attribute(node, "href", conlink, maxlen);
+	assert(conlen < maxlen);
+
+exit_10:
+	ovirt_xml_exit(oxml);
+	return conlen;
+}
+
+int ovirt_download(struct ovirt *ov, const char *link)
+{
+	struct curl_slist *header = NULL;
+	int retv, len;
+	struct ovirt_xml *oxml;
+
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, link);
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_content_xml);
+	header = curl_slist_append(header, hd_accept_xml);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, action_empty_len);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, action_empty);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	curl_slist_free_all(header);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (retv < 0)
+		return retv;
+	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
+	if (!oxml) {
+		fprintf(stderr, "Download corrrupt.\n%s\n", ov->dndat);
+		return -(err_base + err_download);
+	}
+	len = xmlget_value(oxml, "/action/remote_viewer_connection_file",
+			ov->dndat, ov->max_dnlen);
+	return len;
+}
+
+int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
+{
+	FILE *fout;
+	struct curl_slist *header = NULL;
+	int retv, len, num;
+	char conlink[256];
+
+	fout = fopen(vv, "wb");
+	if (!fout) {
+		fprintf(stderr, "Cannot open file %s: %s\n", vv,
+				strerror(errno));
+		return -(err_base + err_file);
+	}
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, vm->href);
+	strcat(ov->uri, "/graphicsconsoles");
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_content_xml);
+	header = curl_slist_append(header, hd_accept_xml);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	curl_slist_free_all(header);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (retv < 0)
+		goto exit_10;
+	len = xml_get_conlink(ov->dndat, ov->dnlen, conlink, sizeof(conlink));
+	assert(len < sizeof(conlink));
+	if (len <= 0)
+		goto exit_10;
+	printf("Console: %s\n", conlink);
+	strcat(conlink, "/remoteviewerconnectionfile");
+	len = ovirt_download(ov, conlink);
+	if (len > 0) {
+		num = fwrite(ov->dndat, 1, len, fout);
+		if (num < len)
+			fprintf(stderr, "File write not complete: %s\n",
+					strerror(errno));
+	}
+
+exit_10:
+	fclose(fout);
 	return retv;
 }

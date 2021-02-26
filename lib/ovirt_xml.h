@@ -32,6 +32,8 @@ static inline xmlNode * xml_next_element(xmlNode *node)
 	return node;
 }
 
+xmlNode * xml_search_siblings(xmlNode *node, const char *nname);
+
 xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath);
 
 int xmlget_value(struct ovirt_xml *oxml, const char *xpath,

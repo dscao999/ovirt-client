@@ -61,8 +61,10 @@ int main(int argc, char *argv[])
 				printf("VM Status: %d\n", status);
 			} while (status != compcode);
 		} else {
-			printf("VM State: %d\n%s\n", status, ov->dndat);
+			printf("VM State: %d\n", status);
 		}
+		if (status == 4)
+			num = ovirt_get_vmconsole(ov, curvm, "/tmp/myvv.txt");
 	}
 	free(vms);
 
