@@ -1,4 +1,4 @@
-CFLAGS +=-Wall -g -I/usr/include/libxml2
+CFLAGS += -Wall -g -I/usr/include/libxml2
 
 .PHONY: all clean
 
@@ -16,3 +16,11 @@ xmlp: xmlp.o ovirt_xml.o
 clean:
 	rm -f curltx b64 xmlp
 	rm -f *.o
+
+
+%.o: %.c
+	$(COMPILE.c) -MMD -MP -c $< -o $@
+
+srcs = $(wildcard *.c)
+header_deps = $(srcs:.c=.d)
+-include $(header_deps)

@@ -512,16 +512,17 @@ static int ovirt_vm_getstate(struct ovirt *ov, struct ovirt_vm *vm)
 	return match_vm_status(vm->state);
 }
 
+
 int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 {
 	struct curl_slist *header = NULL;
-	char vmaction[16];
 	int retv;
+	static const char action_empty[] = "<action/>";
+	static const int action_empty_len = 9;
 
 	if (strcmp(action, "status") == 0)
 		return ovirt_vm_getstate(ov, vm);
 
-	strcpy(vmaction, "<action/>");
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, vm->href);
 	strcat(ov->uri, "/");
@@ -535,8 +536,8 @@ int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 	ov->errmsg[0] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
-	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, vmaction);
-	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, strlen(vmaction));
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, action_empty);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, action_empty_len);
 	curl_easy_perform(ov->curl);
 	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);

@@ -61,9 +61,8 @@ int main(int argc, char *argv[])
 				printf("VM Status: %d\n", status);
 			} while (status != compcode);
 		} else {
-			printf("VM State: %d\n", status);
+			printf("VM State: %d\n%s\n", status, ov->dndat);
 		}
-
 	}
 	free(vms);
 
