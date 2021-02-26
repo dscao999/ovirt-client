@@ -9,9 +9,9 @@
 int main(int argc, char *argv[])
 {
 	struct ovirt *ov;
-	const char *username, *pass, *action;
+	const char *username, *pass;
 	int retv, verbose = 0, num;
-	int status, compcode, i;
+	int i, selvm;
 	struct ovirt_vm *vms, *curvm;
 
 	if (argc > 1)
@@ -23,11 +23,7 @@ int main(int argc, char *argv[])
 	else
 		pass = "abc123";
 	if (argc > 3)
-		action = argv[3];
-	else
-		action = "status";
-	if (argc > 4)
-		verbose = atoi(argv[4]);
+		verbose = atoi(argv[3]);
 
 	ov = ovirt_init("engine.cluster", verbose);
 	if (!ov) {
@@ -44,28 +40,18 @@ int main(int argc, char *argv[])
 		goto exit_10;
 	}
 	num = ovirt_list_vms(ov, &vms);
-	curvm = vms;
-	for (curvm = vms, i = 0; i < num; i++, curvm++) {
-		if (strcmp(action, "start") == 0)
-			compcode = 4;
-		else if (strcmp(action, "shutdown") == 0 || 
-				strcmp(action, "stop") == 0)
-			compcode = 1;
-		else if (strcmp(action, "status") == 0)
-			compcode = 0;
-		status = ovirt_vm_action(ov, curvm, action);
-		if (compcode != 0) {
-			do {
-				sleep(3);
-				status = ovirt_vm_action(ov, curvm, "status");
-				printf("VM Status: %d\n", status);
-			} while (status != compcode);
-		} else {
-			printf("VM State: %d\n", status);
+	do {
+		for (curvm = vms, i = 0; i < num; i++, curvm++) {
+			ovirt_vm_action(ov, curvm, "status");
+			printf("[%2d] - %s, state: %s\n", i, curvm->id,
+					curvm->state);
 		}
-		if (status == 4)
-			num = ovirt_get_vmconsole(ov, curvm, "/tmp/myvv.txt");
-	}
+		printf("Please select the VM to connect: ");
+		fflush(stdout);
+		scanf("%d", &selvm);
+	} while (selvm < 0 || selvm >= num);
+	printf("Selected VM: %d\n", selvm);
+//	num = ovirt_get_vmconsole(ov, curvm, "/tmp/myvv.txt");
 	free(vms);
 
 exit_10:

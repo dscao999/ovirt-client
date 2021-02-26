@@ -5,7 +5,7 @@ CFLAGS += -I./lib
 all: lib curltx b64
 
 curltx: curltx.o
-	$(LINK.o) $^ -L./lib -lovcurl -lcurl -lxml2 -ljansson -o $@
+	$(LINK.o) $^ -L./lib -lovcurl -o $@
 
 b64: b64encode.o
 	$(LINK.o) $^ -L./lib -lovcurl -o $@
