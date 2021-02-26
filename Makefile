@@ -1,20 +1,21 @@
-CFLAGS += -Wall -g -I/usr/include/libxml2
+CFLAGS += -I./lib
 
-.PHONY: all clean
+.PHONY: all clean lib
 
-all: curltx b64 xmlp
+all: lib curltx b64
 
-curltx: curltx.o ovirt-client.o ovirt_xml.o base64.o
-	$(LINK.o) $^ -lcurl -lxml2 -ljansson -o $@
+curltx: curltx.o
+	$(LINK.o) $^ -L./lib -lovcurl -lcurl -lxml2 -ljansson -o $@
 
-b64: b64encode.o base64.o
-	$(LINK.o) $^ -o $@
+b64: b64encode.o
+	$(LINK.o) $^ -L./lib -lovcurl -o $@
 
-xmlp: xmlp.o ovirt_xml.o
-	$(LINK.o) $^ -lxml2 -o $@
+lib:
+	$(MAKE) -C lib
 
 clean:
-	rm -f curltx b64 xmlp
+	$(MAKE) -C lib $@
+	rm -f curltx b64
 	rm -f *.o
 
 include Makefile.defs

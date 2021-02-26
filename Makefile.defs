@@ -2,7 +2,7 @@
 # common definitions for header dependency
 # 
 %.o: %.c
-	$(COMPILE.c) -MMD -MP -c $< -o $@
+	$(COMPILE.c) -MMD -MP $< -o $@
 
 srcs = $(wildcard *.c)
 header_deps = $(srcs:.c=.d)
