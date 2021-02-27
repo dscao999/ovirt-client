@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "ovirt_xml.h"
+#include "ovirt-xml.h"
 
 struct ovirt_xml * ovirt_xml_init(const char *xmlbuf, int len)
 {

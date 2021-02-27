@@ -8,7 +8,7 @@
 #include <assert.h>
 #include <errno.h>
 #include "base64.h"
-#include "ovirt_xml.h"
+#include "ovirt-xml.h"
 #include "ovirt-client.h"
 
 static const unsigned short err_base = 0x1000;

@@ -2,9 +2,9 @@ CFLAGS += -I./lib
 
 .PHONY: all clean lib
 
-all: lib curltx b64
+all: lib convirt b64
 
-curltx: curltx.o
+convirt: convirt.o
 	$(LINK.o) $^ -L./lib -lovcurl -o $@
 
 b64: b64encode.o
@@ -15,7 +15,7 @@ lib:
 
 clean:
 	$(MAKE) -C lib $@
-	rm -f curltx b64
+	rm -f convirt b64
 	rm -f *.o
 
 include Makefile.defs
