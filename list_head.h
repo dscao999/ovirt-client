@@ -1,7 +1,9 @@
 #ifndef LIST_HEAD_DSCAO__
 #define LIST_HEAD_DSCAO__
 
-#define offsetof(type, member)  __builtin_offsetof(type, member)
+#ifndef offsetof
+#define offsetof(type, member)  __builtin_offsetof (type, member)
+#endif
 #define container_of(ptr, type, member) \
 	({ \
 	 const typeof(((type *)0)->member) *__mptr = (ptr); \
@@ -48,6 +50,22 @@ static inline void list_del(struct list_head *node, struct list_head *head)
 	next = node->next;
 	prev->next = next;
 	next->prev = prev;
+}
+
+static inline struct list_head *list_index(struct list_head *head, int i)
+{
+	int seq;
+	struct list_head *cur;
+
+	seq = -1;
+	list_for_each(cur, head) {
+		seq++;
+		if (seq == i)
+			break;
+	}
+	if (cur == head)
+		cur = NULL;
+	return cur;
 }
 
 #endif /* LIST_HEAD_DSCAO__ */

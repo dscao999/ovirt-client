@@ -368,6 +368,7 @@ int ovirt_init_version(struct ovirt *ov)
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "session logon failed.\n");
@@ -414,7 +415,7 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 	struct ovirt_xml *oxml;
 	xmlNode *node;
 	int numvms;
-	struct list_head *cur;
+	struct list_head *cur, *tmp;
 	struct ovirt_vm *curvm;
 	static const char xpath[] = "/vms/vm";
 	char id[64];
@@ -430,8 +431,10 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 		assert(len < sizeof(curvm->id));
 		list_for_each(cur, vmhead) {
 			curvm = list_entry(cur, struct ovirt_vm, lst);
-			if (strcmp(curvm->id, id) == 0)
+			if (strcmp(curvm->id, id) == 0) {
+				curvm->hit = 1;
 				break;
+			}
 		}
 		if (cur == vmhead) {
 			curvm = malloc(sizeof(struct ovirt_vm));
@@ -442,8 +445,18 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 			assert(len < sizeof(curvm->href));
 			strcpy(curvm->id, id);
 			list_add(&curvm->lst, vmhead);
+			curvm->con = 0;
+			curvm->hit = 1;
 		}
 		node = xml_next_element(node);
+	}
+	list_for_each_safe(cur, tmp, vmhead) {
+		curvm = list_entry(cur, struct ovirt_vm, lst);
+		if (curvm->hit == 0) {
+			list_del(&curvm->lst, vmhead);
+			free(curvm);
+		} else
+			curvm->hit = 0;
 	}
 	return numvms;
 }
@@ -469,6 +482,7 @@ int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead)
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "Cannot list VMs.\n");

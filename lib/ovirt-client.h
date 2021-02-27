@@ -26,6 +26,7 @@ struct ovirt_vm {
 	char id[128];
 	char state[32];
 	struct list_head lst;
+	int con, hit;
 };
 
 

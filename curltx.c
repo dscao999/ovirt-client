@@ -13,7 +13,7 @@
 
 struct remote_view {
 	struct list_head lst;
-	char vmid[128];
+	struct ovirt_vm *vm;
 	pid_t rid;
 };
 
@@ -24,7 +24,6 @@ static int post_view(struct list_head *head)
 	pid_t expid;
 	int num;
 
-	INIT_LIST_HEAD(&rem_head);
 	num = 0;
 	list_for_each_safe(cur, tmp, head) {
 		view = list_entry(cur, struct remote_view, lst);
@@ -34,6 +33,7 @@ static int post_view(struct list_head *head)
 					strerror(errno));
 		else if (expid > 0) {
 			list_del(cur, head);
+			view->vm->con = 0;
 			free(view);
 			num++;
 		}
@@ -59,12 +59,8 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 	int retv = 0, num, sact;
 	struct remote_view *view;
 	char vvname[64];
+	pid_t cpid;
 
-	view = malloc(sizeof(struct remote_view));
-	if (!view) {
-		fprintf(stderr, "Out of memory.\n");
-		return -ENOMEM;
-	}
 	sact = 0;
 	if (strcmp(curvm->state, "down") == 0 ||
 			strcmp(curvm->state, "suspended") == 0) {
@@ -89,25 +85,30 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 	num = ovirt_get_vmconsole(ov, curvm, vvname);
 	if (num <= 0)
 		goto exit_10;
-	strcpy(view->vmid, curvm->id);
-	view->rid = fork();
-	if (view->rid == -1) {
+	cpid = fork();
+	if (cpid == -1) {
 		fprintf(stderr, "Cannot fork: %s\n", strerror(errno));
 		retv = -errno;
 		goto exit_10;
-	} else if (view->rid == 0) {
+	} else if (cpid == 0) {
 		retv = execlp("remote-viewer", "remote-viewer", "--",
 				vvname, NULL);
 		fprintf(stderr, "Cannot start remote-viewer: %s\n",
 				strerror(errno));
 		exit(1);
 	}
+	view = malloc(sizeof(struct remote_view));
+	if (!view) {
+		fprintf(stderr, "Out of memory.\n");
+		return -ENOMEM;
+	}
+	view->rid = cpid;
 	list_add(&view->lst, head);
+	curvm->con = 1;
+	view->vm = curvm;
 	retv = 1;
 
 exit_10:
-	if (retv != 1)
-		free(view);
 	return retv;
 }
 
@@ -117,10 +118,10 @@ int main(int argc, char *argv[])
 	const char *username, *pass;
 	int retv, verbose = 0, num;
 	int i, selvm;
-	struct ovirt_vm *vms, *curvm;
+	struct ovirt_vm *curvm;
 	struct sigaction act;
-	struct dblist view_head, *cur;
-	struct remote_view *view;
+	struct list_head view_head, vmhead, *cur, *tmp;
+	struct remote_view *cur_view;
 
 	if (argc > 1)
 		username = argv[1];
@@ -133,6 +134,8 @@ int main(int argc, char *argv[])
 	if (argc > 3)
 		verbose = atoi(argv[3]);
 
+	INIT_LIST_HEAD(&view_head);
+	INIT_LIST_HEAD(&vmhead);
 	memset(&act, 0, sizeof(act));
 	act.sa_handler = sig_handler;
 	if (sigaction(SIGCHLD, &act, NULL) == -1) {
@@ -150,8 +153,6 @@ int main(int argc, char *argv[])
 				strerror(errno));
 		return 5;
 	}
-	view_head.next = &view_head;
-	view_head.prev = &view_head;
 
 	ov = ovirt_init("engine.cluster", verbose);
 	if (!ov) {
@@ -167,20 +168,21 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Cannot Init version\n");
 		goto exit_10;
 	}
-	vms = NULL;
 	while (global_stop == 0) {
-		free(vms);
-		num = ovirt_list_vms(ov, &vms);
+		num = ovirt_list_vms(ov, &vmhead);
 		if (num <= 0) {
 			fprintf(stderr, "No usable VMs now: %s.\n",
 					username);
 			sleep(5);
 			continue;
 		}
-		for (curvm = vms, i = 0; i < num; i++, curvm++) {
+		i = 0;
+		list_for_each(cur, &vmhead) {
+			curvm = list_entry(cur, struct ovirt_vm, lst);
 			ovirt_vm_action(ov, curvm, "status");
-			printf("[%2d] - %s, state: %s\n", i, curvm->id,
-					curvm->state);
+			printf("[%2d] - %s, state: %s, connection: %d\n", i,
+					curvm->id, curvm->state, curvm->con);
+			i++;
 		}
 		printf("Please select the VM to connect: ");
 		fflush(stdout);
@@ -188,26 +190,37 @@ int main(int argc, char *argv[])
 		if (selvm == -1)
 			break;
 		if (selvm > -1 && selvm < num) {
-			curvm = vms + selvm;
-			retv = connect_vm(ov, curvm, &view_head);
+			cur = list_index(&vmhead, selvm);
+			curvm = list_entry(cur, struct ovirt_vm, lst);
+			if (curvm->con == 1)
+				fprintf(stderr, "Already connected.\n");
+			else
+				retv = connect_vm(ov, curvm, &view_head);
 		}
 		if (view_exited != 0) {
 			view_exited = 0;
 			num = post_view(&view_head);
 		}
 	}
-	cur = view_head.next;
-	while (cur != &view_head) {
-		view =container_of(cur, struct remote_view, lst);
-		kill(view->rid, SIGTERM);
-		cur = cur->next;
+	list_for_each(cur, &view_head) {
+		cur_view = list_entry(cur, struct remote_view, lst);
+		kill(cur_view->rid, SIGTERM);
 	}
 	do {
 		num = post_view(&view_head);
 		fprintf(stderr, "%d view collected.\n", num);
 	} while (view_head.next != &view_head);
+	list_for_each_safe(cur, tmp, &view_head) {
+		list_del(cur, &view_head);
+		cur_view = list_entry(cur, struct remote_view, lst);
+		free(cur_view);
+	}
+	list_for_each_safe(cur, tmp, &vmhead) {
+		list_del(cur, &view_head);
+		curvm = list_entry(cur, struct ovirt_vm, lst);
+		free(curvm);
+	}
 
-	free(vms);
 exit_10:
 	ovirt_exit(ov);
 	if (retv < 0)
