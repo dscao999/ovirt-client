@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <assert.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "list_head.h"
@@ -109,6 +110,8 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 	retv = 1;
 
 exit_10:
+	if (retv != 1)
+		fprintf(stderr, "Cannot connect to VM: %s\n", curvm->state);
 	return retv;
 }
 
@@ -117,11 +120,12 @@ int main(int argc, char *argv[])
 	struct ovirt *ov;
 	const char *username, *pass;
 	int retv, verbose = 0, num;
-	int i, selvm;
+	int i, selvm, op_kill = 0;
 	struct ovirt_vm *curvm;
 	struct sigaction act;
 	struct list_head view_head, vmhead, *cur, *tmp;
 	struct remote_view *cur_view;
+	struct timespec tm;
 
 	if (argc > 1)
 		username = argv[1];
@@ -195,25 +199,26 @@ int main(int argc, char *argv[])
 			if (curvm->con == 1)
 				fprintf(stderr, "Already connected.\n");
 			else
-				retv = connect_vm(ov, curvm, &view_head);
+				connect_vm(ov, curvm, &view_head);
 		}
 		if (view_exited != 0) {
 			view_exited = 0;
-			num = post_view(&view_head);
+			post_view(&view_head);
 		}
 	}
 	list_for_each(cur, &view_head) {
 		cur_view = list_entry(cur, struct remote_view, lst);
 		kill(cur_view->rid, SIGTERM);
+		if (op_kill== 0)
+			op_kill = 1;
 	}
-	do {
-		sleep(1);
+	tm.tv_sec = 0;
+	tm.tv_nsec = 100000000ul;
+	if (op_kill)
+		nanosleep(&tm, NULL);
+	while (view_head.next != &view_head) {
 		num = post_view(&view_head);
-	} while (view_head.next != &view_head);
-	list_for_each_safe(cur, tmp, &view_head) {
-		list_del(cur, &view_head);
-		cur_view = list_entry(cur, struct remote_view, lst);
-		free(cur_view);
+		nanosleep(&tm, NULL);
 	}
 	list_for_each_safe(cur, tmp, &vmhead) {
 		list_del(cur, &view_head);
