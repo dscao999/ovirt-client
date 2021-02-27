@@ -207,8 +207,8 @@ int main(int argc, char *argv[])
 		kill(cur_view->rid, SIGTERM);
 	}
 	do {
+		sleep(1);
 		num = post_view(&view_head);
-		fprintf(stderr, "%d view collected.\n", num);
 	} while (view_head.next != &view_head);
 	list_for_each_safe(cur, tmp, &view_head) {
 		list_del(cur, &view_head);
