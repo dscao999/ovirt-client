@@ -409,13 +409,15 @@ static int get_node_attribute(xmlNode *node, const char *attr_id,
 	return len;
 }
 
-static int xml_getvms(const char *xmlstr, int len, struct ovirt_vm *vms, int num)
+static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 {
 	struct ovirt_xml *oxml;
 	xmlNode *node;
 	int numvms;
-	struct ovirt_vm *curvm = vms;
+	struct list_head *cur;
+	struct ovirt_vm *curvm;
 	static const char xpath[] = "/vms/vm";
+	char id[64];
 
 	oxml = ovirt_xml_init(xmlstr, len);
 	if (!oxml)
@@ -423,16 +425,24 @@ static int xml_getvms(const char *xmlstr, int len, struct ovirt_vm *vms, int num
 	node = xml_search_element(oxml, xpath);
 	numvms = 0;
 	while (node) {
-		if (curvm && numvms < num) {
+		numvms += 1;
+		len = get_node_attribute(node, "id", id, sizeof(id));
+		assert(len < sizeof(curvm->id));
+		list_for_each(cur, vmhead) {
+			curvm = list_entry(cur, struct ovirt_vm, lst);
+			if (strcmp(curvm->id, id) == 0)
+				break;
+		}
+		if (cur == vmhead) {
+			curvm = malloc(sizeof(struct ovirt_vm));
+			INIT_LIST_HEAD(&curvm->lst);
+			curvm->state[0] = 0;
 			len = get_node_attribute(node, "href",
 					curvm->href, sizeof(curvm->href));
 			assert(len < sizeof(curvm->href));
-			len = get_node_attribute(node, "id",
-					curvm->id, sizeof(curvm->id));
-			assert(len < sizeof(curvm->id));
-			curvm++;
+			strcpy(curvm->id, id);
+			list_add(&curvm->lst, vmhead);
 		}
-		numvms += 1;
 		node = xml_next_element(node);
 	}
 	return numvms;
@@ -440,7 +450,7 @@ static int xml_getvms(const char *xmlstr, int len, struct ovirt_vm *vms, int num
 
 static const char ovirt_vms[] = "/ovirt-engine/api/vms";
 
-int ovirt_list_vms(struct ovirt *ov, struct ovirt_vm **vms)
+int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead)
 {
 	struct curl_slist *header = NULL;
 	int retv, numvms;
@@ -464,13 +474,7 @@ int ovirt_list_vms(struct ovirt *ov, struct ovirt_vm **vms)
 		fprintf(stderr, "Cannot list VMs.\n");
 		return retv;
 	}
-	numvms = xml_getvms(ov->dndat, ov->dnlen, NULL, 0);
-	*vms = malloc(numvms*sizeof(struct ovirt_vm));
-	if (!(*vms)) {
-		fprintf(stderr, "Out of Memory.\n");
-		return -ENOMEM;
-	}
-	xml_getvms(ov->dndat, ov->dnlen, *vms, numvms);
+	numvms = xml_getvms(ov->dndat, ov->dnlen, vmhead);
 	return numvms;
 }
 
@@ -673,7 +677,6 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 	assert(len < sizeof(conlink));
 	if (len <= 0)
 		goto exit_10;
-	printf("Console: %s\n", conlink);
 	strcat(conlink, "/remoteviewerconnectionfile");
 	len = ovirt_download(ov, conlink);
 	if (len > 0) {
@@ -682,6 +685,7 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 			fprintf(stderr, "File write not complete: %s\n",
 					strerror(errno));
 	}
+	retv = len;
 
 exit_10:
 	fclose(fout);

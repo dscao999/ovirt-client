@@ -1,6 +1,7 @@
 #ifndef OVIRT_CLIENT_DSCAO__
 #define OVIRT_CLIENT_DSCAO__
 #include <curl/curl.h>
+#include "list_head.h"
 
 enum OVIRT_AUTH {AUTH_NONE, AUTH_BASIC, AUTH_OAUTH, AUTH_SESSION};
 struct ovirt {
@@ -24,6 +25,7 @@ struct ovirt_vm {
 	char href[512];
 	char id[128];
 	char state[32];
+	struct list_head lst;
 };
 
 
@@ -39,7 +41,7 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain);
 
 int ovirt_init_version(struct ovirt *ov);
-int ovirt_list_vms(struct ovirt *ov, struct ovirt_vm **vms);
+int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead);
 int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm,
 		const char *action);
 int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv);
