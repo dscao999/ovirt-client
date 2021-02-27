@@ -198,8 +198,11 @@ int main(int argc, char *argv[])
 			curvm = list_entry(cur, struct ovirt_vm, lst);
 			if (curvm->con == 1)
 				fprintf(stderr, "Already connected.\n");
-			else
-				connect_vm(ov, curvm, &view_head);
+			else {
+				retv = connect_vm(ov, curvm, &view_head);
+				if (strcmp(curvm->state, "up") != 0)
+					global_exit = 0;
+			}
 		}
 		if (view_exited != 0) {
 			view_exited = 0;

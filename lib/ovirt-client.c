@@ -495,8 +495,9 @@ int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead)
 static int match_vm_status(const char *st)
 {
 	static const char *vm_states[] = {
-		"wait_for_launch", "down", "powering_down", "powering_up",
-		"up", NULL
+		"wait_for_launch", "down", "suspended", "powering_down",
+		"reboot_in_progress", "saving_state", "powering_up",
+		"restoring_state", "up", NULL
 	};
 	int idx;
 
