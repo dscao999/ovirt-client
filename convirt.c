@@ -1,3 +1,7 @@
+/*
+ * A C client communicationg with oVirt engine through its REST API
+ * by the means of libcurl
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
