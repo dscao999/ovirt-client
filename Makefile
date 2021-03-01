@@ -5,7 +5,7 @@ CFLAGS += -I./lib
 all: lib convirt b64
 
 convirt: convirt.o
-	$(LINK.o) $^ -L./lib -lovcurl -o $@
+	$(LINK.o) $^ -L./lib -lovcurl -lcurl -o $@
 
 b64: b64encode.o
 	$(LINK.o) $^ -L./lib -lovcurl -o $@

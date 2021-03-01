@@ -86,10 +86,16 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 	num = ovirt_get_vmconsole(ov, curvm, vvname);
 	if (num <= 0)
 		goto exit_10;
+	view = malloc(sizeof(struct remote_view));
+	if (!view) {
+		fprintf(stderr, "Out of memory.\n");
+		return -ENOMEM;
+	}
 	cpid = fork();
 	if (cpid == -1) {
 		fprintf(stderr, "Cannot fork: %s\n", strerror(errno));
 		retv = -errno;
+		free(view);
 		goto exit_10;
 	} else if (cpid == 0) {
 		retv = execlp("remote-viewer", "remote-viewer", "--",
@@ -97,11 +103,6 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 		fprintf(stderr, "Cannot start remote-viewer: %s\n",
 				strerror(errno));
 		exit(1);
-	}
-	view = malloc(sizeof(struct remote_view));
-	if (!view) {
-		fprintf(stderr, "Out of memory.\n");
-		return -ENOMEM;
 	}
 	view->rid = cpid;
 	list_add(&view->lst, head);
@@ -158,18 +159,22 @@ int main(int argc, char *argv[])
 		return 5;
 	}
 
-	ov = ovirt_init("engine.cluster", verbose);
+	ov = ovirt_init("engine.cluster");
 	if (!ov) {
 		fprintf(stderr, "CURL Initialization failed.\n");
 		fprintf(stderr, "Error:\n%s\n", ov->errmsg);
 		return 1;
 	}
+	ovirt_set_verbose(ov, verbose);
 	retv = ovirt_logon(ov, username, pass, NULL);
 	if (retv < 0)
 		goto exit_10;
 	retv = ovirt_init_version(ov);
-	if (retv != 0) {
+	if (retv < 0) {
 		fprintf(stderr, "Cannot Init version\n");
+		goto exit_10;
+	} else if (retv < 3) {
+		fprintf(stderr, "oVirt version too low. Major: %d\n", retv);
 		goto exit_10;
 	}
 	while (global_stop == 0) {
@@ -184,11 +189,12 @@ int main(int argc, char *argv[])
 		list_for_each(cur, &vmhead) {
 			curvm = list_entry(cur, struct ovirt_vm, lst);
 			ovirt_vm_action(ov, curvm, "status");
-			printf("[%2d] - %s, state: %s, connection: %d\n", i,
+			printf("[%2d] - %s, state: %s, connected: %d\n", i,
 					curvm->id, curvm->state, curvm->con);
 			i++;
 		}
-		printf("Please select the VM to connect: ");
+		printf("Please select the VM to connect[-1, exit]" \
+				"[>= %d, refresh]: ", i);
 		fflush(stdout);
 		scanf("%d", &selvm);
 		if (selvm == -1)
@@ -201,7 +207,7 @@ int main(int argc, char *argv[])
 			else {
 				retv = connect_vm(ov, curvm, &view_head);
 				if (strcmp(curvm->state, "up") != 0)
-					global_exit = 0;
+					global_stop = 0;
 			}
 		}
 		if (view_exited != 0) {

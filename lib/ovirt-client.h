@@ -8,6 +8,7 @@ struct ovirt {
 	CURL *curl;
 	unsigned short version, auth;
 	unsigned short uplen, uppos;
+	unsigned int buflen;
 	unsigned int dnlen;
         unsigned int max_dnlen;
 	unsigned int hdlen;
@@ -30,7 +31,7 @@ struct ovirt_vm {
 };
 
 
-struct ovirt *ovirt_init(const char *host, int verbose);
+struct ovirt *ovirt_init(const char *host);
 void ovirt_exit(struct ovirt *ov);
 
 static inline void ovirt_set_verbose(struct ovirt *ov, int verbose)

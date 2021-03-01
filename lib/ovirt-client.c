@@ -217,7 +217,7 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 	return retv;
 }
 
-struct ovirt * ovirt_init(const char *ohost, int verbose)
+struct ovirt * ovirt_init(const char *ohost)
 {
 	struct ovirt *ov;
 
@@ -240,7 +240,7 @@ struct ovirt * ovirt_init(const char *ohost, int verbose)
 		munmap(ov, OVIRT_SIZE + OVIRT_HEADER_SIZE);
 		return NULL;
 	}
-	curl_easy_setopt(ov->curl, CURLOPT_VERBOSE, verbose);
+	curl_easy_setopt(ov->curl, CURLOPT_VERBOSE, 0);
 	curl_easy_setopt(ov->curl, CURLOPT_FOLLOWLOCATION, 1);
 	curl_easy_setopt(ov->curl, CURLOPT_READFUNCTION, upload);
 	curl_easy_setopt(ov->curl, CURLOPT_READDATA, ov);
@@ -358,8 +358,8 @@ int ovirt_init_version(struct ovirt *ov)
 	strcat(ov->uri, ovirt_api);
 	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	header = curl_slist_append(header, ov->token);
-	header = curl_slist_append(header, hd_accept_xml);
 	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, hd_accept_xml);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	ov->dnlen = 0;
 	ov->hdlen = 0;
@@ -371,7 +371,7 @@ int ovirt_init_version(struct ovirt *ov)
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
-		fprintf(stderr, "session logon failed.\n");
+		fprintf(stderr, "Cannot fetch the oVirt version.\n");
 		return retv;
 	}
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
@@ -380,8 +380,8 @@ int ovirt_init_version(struct ovirt *ov)
 				ov->dndat, ov->max_dnlen);
 		ovirt_xml_exit(oxml);
 		if (len > 0 && len < ov->max_dnlen) {
-			retv = 0;
 			ov->version = atoi(ov->dndat);
+			retv = ov->version;
 		}
 	}
 	return retv;
@@ -519,6 +519,7 @@ static int ovirt_vm_getstate(struct ovirt *ov, struct ovirt_vm *vm)
 	int retv = -1, len;
 	struct ovirt_xml *oxml;
 
+	strcpy(vm->state, "unknown");
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, vm->href);
 	header = curl_slist_append(header, hd_prefer);
@@ -538,11 +539,13 @@ static int ovirt_vm_getstate(struct ovirt *ov, struct ovirt_vm *vm)
 	if (retv < 0)
 		return retv;
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
-	if (!oxml)
-		return retv;
-	len = xmlget_value(oxml, "/vm/status", vm->state, sizeof(vm->state));
-	assert(len < sizeof(vm->state));
-	vm->state[len] = 0;
+	if (oxml) {
+		len = xmlget_value(oxml, "/vm/status", vm->state,
+				sizeof(vm->state));
+		assert(len < sizeof(vm->state));
+		vm->state[len] = 0;
+		ovirt_xml_exit(oxml);
+	}
 	return match_vm_status(vm->state);
 }
 
