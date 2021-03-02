@@ -2,7 +2,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <jansson.h>
+#include <json-c/json.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #include <assert.h>
@@ -73,33 +73,50 @@ static size_t hdrecv(char *buf, size_t siz, size_t nitems, void *usrdat)
 
 static int get_json_token(char *buf, int buflen, const char *jtxt)
 {
-	json_error_t jerr;
+	json_object *json, *jval;
 	int retv = 0;
-	json_t *root, *token;
-	const char *token_str;
+	struct json_object_iterator iter, iend;
+	const char *key, *val;
 
-	root = json_loads(jtxt, 0, &jerr);
-	if (!root) {
-		fprintf(stderr, "OAUTH Response is not valid: %s\n", jerr.text);
+	iter = json_object_iter_init_default();
+	iend = json_object_iter_init_default();
+	json = json_tokener_parse(jtxt);
+	if (!json) {
+		fprintf(stderr, "OAUTH Response is not valid: %s\n", jtxt);
 		return -(err_base + err_auth_invalid);
 	}
-	token = json_object_get(root, "access_token");
-	if (!json_is_string(token)) {
-		fprintf(stderr, "OAUTH Response missing \"access_token\".\n");
+	iter = json_object_iter_begin(json);
+	iend = json_object_iter_end(json);
+	if (json_object_iter_equal(&iter, &iend))
+		goto exit_10;
+	do {
+		key = json_object_iter_peek_name(&iter);
+		if (key && strcmp(key, "access_token") == 0)
+			break;
+		json_object_iter_next(&iter);
+	} while (!json_object_iter_equal(&iter, &iend));
+	if (json_object_iter_equal(&iter, &iend)) {
+		fprintf(stderr, "OAUTH Response has no token: %s\n", jtxt);
 		retv = -(err_base + err_no_auth);
 		goto exit_10;
 	}
-	token_str = json_string_value(token);
-	if (strlen(token_str) > buflen - 22) {
-		fprintf(stderr, "Buffer overflow in get_json_token.\n");
+	jval = json_object_iter_peek_value(&iter);
+	if (!json_object_is_type(jval, json_type_string)) {
+		fprintf(stderr, "OAUTH Response is not valid: %s\n", jtxt);
+		retv = -(err_base + err_auth_invalid);
+		goto exit_10;
+	}
+	val = json_object_get_string(jval);
+	if (strlen(val) + 22 >= buflen) {
+		fprintf(stderr, "access token too long, overflow.\n");
 		retv = -(err_base + err_overflow);
 		goto exit_10;
 	}
 	strcpy(buf, "Authorization: Bearer ");
-	strcat(buf, token_str);
-
+	strcat(buf, val);
+	retv = strlen(buf);
 exit_10:
-	json_decref(root);
+	json_object_put(json);
 	return retv;
 }
 
