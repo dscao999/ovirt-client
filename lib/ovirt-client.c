@@ -148,7 +148,7 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 	const char *dom;
 	char *postdata;
 	struct curl_slist *header = NULL;
-	int retv;
+	int retv, len;
 
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, sso_path);
@@ -181,9 +181,10 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 		fprintf(stderr, "OAUTH logon operation failed.\n");
 		return retv;
 	}
-	retv = get_json_token(ov->token, sizeof(ov->token), ov->dndat);
-	if (retv >= 0)
-		ov->auth = AUTH_OAUTH;
+	len = get_json_token(ov->token, sizeof(ov->token), ov->dndat);
+	if (len < 0)
+		return len;
+	ov->auth = AUTH_OAUTH;
 	return retv;
 }
 
@@ -284,7 +285,7 @@ void ovirt_exit(struct ovirt *ov)
 static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
 {
 	const char *json_id, *semi = NULL;
-	int len;
+	int len, retv = 0;
 
 	json_id = strstr(hdbuf, "JSESSIONID=");
 	if (json_id)
@@ -296,11 +297,12 @@ static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
 	len = semi - json_id;
 	strcpy(buf, "Cookie: ");
 	if (len + 8 < buflen) {
-		strncat(buf+8, json_id, len);
-		buf[len+8] = 0;
-	} else
+		strcat(buf+8, json_id);
+	} else {
 		fprintf(stderr, "Session Token ID too large.\n");
-	return (len + 8);
+		retv = -(err_base + err_overflow);
+	}
+	return retv;
 }
 
 static const char hd_prefer[] = "Prefer: persistent-auth";
@@ -333,10 +335,10 @@ static int ovirt_session_logon(struct ovirt *ov)
 		return retv;
 	}
 	len = ovirt_session_cookie(ov->token, sizeof(ov->token), ov->hdbuf);
-	if (len > 0 && len < sizeof(ov->token))
-		ov->auth = AUTH_SESSION;
+	if (len < 0)
+		retv = len;
 	else
-		retv = -(err_base + 0x105);
+		ov->auth = AUTH_SESSION;
 	return retv;
 }
 
