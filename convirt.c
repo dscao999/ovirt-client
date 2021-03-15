@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
 {
 	struct ovirt *ov;
 	const char *username, *pass;
-	int retv, verbose = 0, num;
+	int retv, verbose = 0, num, version;
 	int i, selvm, op_kill = 0;
 	struct ovirt_vm *curvm;
 	struct sigaction act;
@@ -132,6 +132,7 @@ int main(int argc, char *argv[])
 	struct remote_view *cur_view;
 	struct timespec tm;
 
+	retv = 0;
 	if (argc > 1)
 		username = argv[1];
 	else
@@ -173,11 +174,13 @@ int main(int argc, char *argv[])
 	retv = ovirt_logon(ov, username, pass, NULL);
 	if (retv < 0)
 		goto exit_10;
-	retv = ovirt_init_version(ov);
-	if (retv < 0) {
+	version = ovirt_init_version(ov);
+	if (version < 0) {
+		retv = 1;
 		fprintf(stderr, "Cannot Init version\n");
 		goto exit_10;
-	} else if (retv < 3) {
+	} else if (version < 3) {
+		retv = 2;
 		fprintf(stderr, "oVirt version too low. Major: %d\n", retv);
 		goto exit_10;
 	}
@@ -238,6 +241,7 @@ int main(int argc, char *argv[])
 		curvm = list_entry(cur, struct ovirt_vm, lst);
 		free(curvm);
 	}
+	ovirt_logout(ov);
 
 exit_10:
 	ovirt_exit(ov);

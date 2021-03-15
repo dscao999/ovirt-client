@@ -141,31 +141,23 @@ static int http_check_status(const char *response, const char *msgbody)
 static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 		const char *pass, const char *domain)
 {
+	struct curl_slist *header = NULL;
+	int retv, len;
 	static const char sso_path[] = "/ovirt-engine/sso/oauth/token";
 	static const char sso_param[] = "grant_type=password&" \
 			"scope=ovirt-app-api&username=%s@%s&password=%s";
 	static const char hd_accept_json[] = "Accept: application/json";
-	const char *dom;
-	char *postdata;
-	struct curl_slist *header = NULL;
-	int retv, len;
 
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, sso_path);
 	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
-	if (domain == NULL || strlen(domain) == 0)
-		dom = "internal";
-	else
-		dom = domain;
 	ov->uplen = snprintf(ov->updat, sizeof(ov->updat), sso_param, user,
-			dom, pass);
-	assert(ov->uplen < sizeof(ov->updat) -1);
-	postdata = malloc(strlen(ov->updat)+1);
-	strcpy(postdata, ov->updat);
+			domain, pass);
+	assert(ov->uplen < sizeof(ov->updat) - 1);
 	header = curl_slist_append(header, hd_accept_json);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
-	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, strlen(postdata));
-	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, postdata); 
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, ov->uplen);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, ov->updat);
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
@@ -173,7 +165,6 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	curl_slist_free_all(header);
-	free(postdata);
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
 	retv = http_check_status(ov->hdbuf, ov->dndat);
@@ -189,7 +180,6 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 }
 
 static const char ovirt_api[] = "/ovirt-engine/api";
-static const char hd_basic_auth[] = "Authorization: Basic ";
 static const char hd_accept_xml[] = "Accept: application/xml";
 
 static int ovirt_basic_logon(struct ovirt *ov, const char *user,
@@ -197,14 +187,10 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 {
 	struct curl_slist *header = NULL;
 	static const char pasfmt[] = "%s@%s:%s";
-	const char *dm;
 	int len, retv;
+	static const char hd_basic_auth[] = "Authorization: Basic ";
 
-	if (domain == NULL || strlen(domain) == 0)
-		dm = "internal";
-	else
-		dm = domain;
-	len = sprintf(ov->updat, pasfmt, user, dm, pass);
+	len = sprintf(ov->updat, pasfmt, user, domain, pass);
 	assert(len < sizeof(ov->updat));
 	len = bin2str_b64(ov->dndat, ov->max_dnlen,
 			(const unsigned char *)ov->updat, len);
@@ -245,6 +231,7 @@ struct ovirt * ovirt_init(const char *ohost)
 		fprintf(stderr, "Out of Memory!\n");
 		return NULL;
 	}
+	ov->buflen = OVIRT_SIZE + OVIRT_HEADER_SIZE;
 	ov->max_dnlen = OVIRT_SIZE - sizeof(struct ovirt);
 	ov->max_hdlen = OVIRT_HEADER_SIZE;
 	ov->hdbuf = ((void *)ov) + OVIRT_SIZE;
@@ -279,7 +266,7 @@ void ovirt_exit(struct ovirt *ov)
 {
 	curl_easy_cleanup(ov->curl);
 	curl_global_cleanup();
-	munmap(ov, OVIRT_SIZE + OVIRT_HEADER_SIZE);
+	munmap(ov, ov->buflen);
 }
 
 static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
@@ -297,7 +284,7 @@ static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
 	len = semi - json_id;
 	strcpy(buf, "Cookie: ");
 	if (len + 8 < buflen) {
-		strcat(buf+8, json_id);
+		strncat(buf+8, json_id, len);
 	} else {
 		fprintf(stderr, "Session Token ID too large.\n");
 		retv = -(err_base + err_overflow);
@@ -308,7 +295,7 @@ static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
 static const char hd_prefer[] = "Prefer: persistent-auth";
 static const char hd_content_xml[] = "Content-Type: application/xml";
 
-static int ovirt_session_logon(struct ovirt *ov)
+static int ovirt_session_logon(struct ovirt *ov, int start)
 {
 	struct curl_slist *header = NULL;
 	int len, retv = 0;
@@ -317,7 +304,8 @@ static int ovirt_session_logon(struct ovirt *ov)
 	strcat(ov->uri, ovirt_api);
 	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	header = curl_slist_append(header, ov->token);
-	header = curl_slist_append(header, hd_prefer);
+	if (start)
+		header = curl_slist_append(header, hd_prefer);
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 1);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	ov->hdlen = 0;
@@ -334,18 +322,39 @@ static int ovirt_session_logon(struct ovirt *ov)
 		fprintf(stderr, "Session logon failed.\n");
 		return retv;
 	}
-	len = ovirt_session_cookie(ov->token, sizeof(ov->token), ov->hdbuf);
-	if (len < 0)
-		retv = len;
-	else
-		ov->auth = AUTH_SESSION;
+	if (start) {
+		len = ovirt_session_cookie(ov->token, sizeof(ov->token),
+				ov->hdbuf);
+		if (len < 0)
+			retv = len;
+		else
+			ov->auth = AUTH_SESSION;
+	}
 	return retv;
 }
 
 int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain)
 {
+	static const char defdm[] = "internal";
 	int retv = 0, passed = 0;
+
+	if (!user || !pass) {
+		fprintf(stderr, "Username/Password NULL, invalid.\n");
+		return -(err_base + err_auth_invalid);
+	}
+	if (!domain)
+		domain = defdm;
+
+	if (strlen(user) + 1 > sizeof(ov->username) ||
+			strlen(pass) + 1 > sizeof(ov->pass) ||
+			strlen(domain) + 1 > sizeof(ov->domain)) {
+		fprintf(stderr, "username/password/domain overflow.\n");
+		return -(err_base + err_overflow);
+	}
+	strcpy(ov->username, user);
+	strcpy(ov->domain, domain);
+	strcpy(ov->pass, pass);
 
 	ov->auth = 0;
 	if (ov->version >= 4 || ov->version == 0) {
@@ -363,8 +372,27 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		fprintf(stderr, "oVirt Logon failed.\n");
 		return retv;
 	}
-	retv = ovirt_session_logon(ov);
+	retv = ovirt_session_logon(ov, 1);
 	return retv;
+}
+
+void ovirt_logout(struct ovirt *ov)
+{
+	int retv;
+
+	if (ov->version >= 4)
+		retv = ovirt_oauth_logon(ov, ov->username, ov->pass,
+				ov->domain);
+	else
+		retv = ovirt_basic_logon(ov, ov->username, ov->pass,
+				ov->domain);
+	if (retv < 0) {
+		fprintf(stderr, "user credentials become invalid.\n");
+		return;
+	}
+	if (ovirt_session_logon(ov, 0) < 0)
+		fprintf(stderr, "Internal Error: " \
+				"Cannot invalidate session cookie.\n");
 }
 	
 int ovirt_init_version(struct ovirt *ov)

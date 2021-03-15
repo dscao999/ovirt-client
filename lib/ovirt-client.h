@@ -13,6 +13,7 @@ struct ovirt {
         unsigned int max_dnlen;
 	unsigned int hdlen;
 	unsigned int max_hdlen;
+	char username[32], domain[32], pass[64];
 	char engine[64];
 	char token[256];
 	char uri[256];
@@ -41,6 +42,7 @@ static inline void ovirt_set_verbose(struct ovirt *ov, int verbose)
 
 int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain);
+void ovirt_logout(struct ovirt *ov);
 
 int ovirt_init_version(struct ovirt *ov);
 int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead);
