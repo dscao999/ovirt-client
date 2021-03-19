@@ -23,11 +23,24 @@ struct ovirt {
 	char dndat[0];
 };
 
-struct vm_nic {
-	struct list_head next;
+struct ovirt_vmdisk {
+	char id[128];
+	struct list_head dsk_link;
+	char name[32];
+	unsigned long act_siz;
+	unsigned long pro_siz;
+	unsigned long tot_siz;
+	char format[16];
+	char status[8];
+};
+
+struct ovirt_vmnic {
+	char id[128];
+	struct list_head nic_link;
 	char name[16];
-	char type[16];
+	char interface[16];
 	char mac[32];
+	int hit;
 };
 
 struct ovirt_vm {

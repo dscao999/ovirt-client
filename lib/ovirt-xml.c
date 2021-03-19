@@ -1,7 +1,51 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 #include "ovirt-xml.h"
+
+#define warn_overflow \
+	fprintf(stderr, "Warning: buffer overflow in %s:%s\n", \
+			__FILE__, __func__)
+
+static inline const char *node_value_pointer(xmlNode *nod)
+{
+	const char *val = NULL;
+
+	if (!nod || !nod->children || !nod->children->content)
+		return val;
+	if (strcmp((const char *)nod->children->name, "text") == 0)
+		val = (const char *)nod->children->content;
+	return val;
+}
+
+int xml_get_node_value(xmlNode *nod, char *buf, int buflen)
+{
+	int len;
+	const char *nname;
+
+	*buf = 0;
+	nname = node_value_pointer(nod);
+	if (!nname)
+		return 0;
+	len = strlen(nname);
+	if (len < buflen)
+		strcpy(buf, nname);
+	else
+		warn_overflow;
+	return len;
+}
+
+int xml_get_value(struct ovirt_xml *oxml, const char *xpath, char *buf, int buflen)
+{
+	xmlNode *node;
+	int len = 0;
+
+	node = xml_search_element(oxml, xpath);
+	if (node)
+		len = xml_get_node_value(node, buf, buflen);
+	return len;
+}
 
 struct ovirt_xml * ovirt_xml_init(const char *xmlbuf, int len)
 {
@@ -40,7 +84,7 @@ err_10:
 	return NULL;
 }
 
-xmlNode * xml_search_siblings(xmlNode *node, const char *nname)
+static xmlNode * xml_search_siblings(xmlNode *node, const char *nname)
 {
 	xmlNode *cur = node;
 
@@ -51,6 +95,11 @@ xmlNode * xml_search_siblings(xmlNode *node, const char *nname)
 		cur = cur->next;
 	}
 	return cur;
+}
+
+xmlNode * xml_search_children(xmlNode *node, const char *nname)
+{
+	return xml_search_siblings(node->children, nname);
 }
 
 xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath)
@@ -75,18 +124,27 @@ xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath)
 	return found;
 }
 
-int xmlget_value(struct ovirt_xml *oxml, const char *xpath, char *buf, int buflen)
+int xml_get_node_attr(xmlNode *node, const char *attr, char *buf, int maxlen)
 {
-	xmlNode *node;
+	const char *val;
+	xmlAttr *prop;
 	int len;
 
-	node = xml_search_element(oxml, xpath);
-	if (!node || !node->children || !node->children->content)
-		return 0;
-	if (strcmp((const char *)node->children->name, "text") != 0)
-		return 0;
-	len = strlen((const char *)node->children->content);
-	if (len < buflen)
-		strcpy(buf, (const char *)node->children->content);
+	len = 0;
+	prop = node->properties;
+	while (prop) {
+		assert(prop->type == XML_ATTRIBUTE_NODE && prop->name);
+		val = (const char *)prop->children->content;
+		if (strcmp((const char *)prop->name, attr) == 0) {
+			len = strlen(val);
+			buf[0] = 0;
+			if (len < maxlen)
+				strcpy(buf, val);
+			else
+				warn_overflow;
+			break;
+		}
+		prop = prop->next;
+	}
 	return len;
 }

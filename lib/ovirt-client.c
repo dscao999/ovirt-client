@@ -423,7 +423,7 @@ int ovirt_init_version(struct ovirt *ov)
 	}
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
 	if (oxml) {
-		len = xmlget_value(oxml, "/api/product_info/version/major",
+		len = xml_get_value(oxml, "/api/product_info/version/major",
 				ov->dndat, ov->max_dnlen);
 		ovirt_xml_exit(oxml);
 		if (len > 0 && len < ov->max_dnlen) {
@@ -432,29 +432,6 @@ int ovirt_init_version(struct ovirt *ov)
 		}
 	}
 	return retv;
-}
-
-static int get_node_attribute(xmlNode *node, const char *attr_id,
-		char *buf, int maxlen)
-{
-	const char *val;
-	xmlAttr *prop;
-	int len;
-
-	len = 0;
-	prop = node->properties;
-	while (prop) {
-		assert(prop->type == XML_ATTRIBUTE_NODE && prop->name);
-		val = (const char *)prop->children->content;
-		if (strcmp((const char *)prop->name, attr_id) == 0) {
-			len = strlen(val);
-			if (len < maxlen)
-				strcpy(buf, val);
-			break;
-		}
-		prop = prop->next;
-	}
-	return len;
 }
 
 static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
@@ -474,7 +451,7 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 	numvms = 0;
 	while (node) {
 		numvms += 1;
-		len = get_node_attribute(node, "id", id, sizeof(id));
+		len = xml_get_node_attr(node, "id", id, sizeof(id));
 		assert(len < sizeof(curvm->id));
 		list_for_each(cur, vmhead) {
 			curvm = list_entry(cur, struct ovirt_vm, vm_link);
@@ -489,7 +466,7 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 			INIT_LIST_HEAD(&curvm->nics);
 			INIT_LIST_HEAD(&curvm->disks);
 			curvm->state[0] = 0;
-			len = get_node_attribute(node, "href",
+			len = xml_get_node_attr(node, "href",
 					curvm->href, sizeof(curvm->href));
 			assert(len < sizeof(curvm->href));
 			strcpy(curvm->id, id);
@@ -497,7 +474,7 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 			curvm->con = 0;
 			curvm->hit = 1;
 		}
-		node = xml_next_element(node);
+		node = xml_next_node(node);
 	}
 	list_for_each_safe(cur, tmp, vmhead) {
 		curvm = list_entry(cur, struct ovirt_vm, vm_link);
@@ -589,7 +566,7 @@ static int ovirt_vm_getstate(struct ovirt *ov, struct ovirt_vm *vm)
 		return retv;
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
 	if (oxml) {
-		len = xmlget_value(oxml, "/vm/status", vm->state,
+		len = xml_get_value(oxml, "/vm/status", vm->state,
 				sizeof(vm->state));
 		assert(len < sizeof(vm->state));
 		vm->state[len] = 0;
@@ -652,16 +629,16 @@ static int xml_get_conlink(const char *xmlbuf, int len,
 	}
 
 	do {
-		proto = xml_search_siblings(node->children, "protocol");
+		proto = xml_search_children(node, "protocol");
 		if (strcmp((const char *)proto->children->content, "spice") == 0)
 			break;
-		node = xml_next_element(node);
+		node = xml_next_node(node);
 	} while (node);
 	if (!node) {
 		fprintf(stderr, "No spice graphics console information.\n");
 		goto exit_10;
 	}
-	conlen = get_node_attribute(node, "href", conlink, maxlen);
+	conlen = xml_get_node_attr(node, "href", conlink, maxlen);
 	assert(conlen < maxlen);
 
 exit_10:
@@ -702,9 +679,100 @@ int ovirt_download(struct ovirt *ov, const char *link)
 		fprintf(stderr, "Download corrrupt.\n%s\n", ov->dndat);
 		return -(err_base + err_download);
 	}
-	len = xmlget_value(oxml, "/action/remote_viewer_connection_file",
+	len = xml_get_value(oxml, "/action/remote_viewer_connection_file",
 			ov->dndat, ov->max_dnlen);
 	return len;
+}
+
+static int xml_get_nics(const char *xmlstr, int len, struct list_head *nichead)
+{
+	struct ovirt_xml *oxml;
+	xmlNode *node, *unod;
+	int numnics;
+	struct list_head *cur, *tmp;
+	struct ovirt_vmnic *curnic;
+	static const char xpath[] = "/nics/nic";
+	char id[64];
+
+	oxml = ovirt_xml_init(xmlstr, len);
+	if (!oxml)
+		return 0;
+	node = xml_search_element(oxml, xpath);
+	numnics = 0;
+	while (node) {
+		numnics += 1;
+		len = xml_get_node_attr(node, "id", id, sizeof(id));
+		assert(len < sizeof(curnic->id));
+		list_for_each(cur, nichead) {
+			curnic = list_entry(cur, struct ovirt_vmnic, nic_link);
+			if (strcmp(curnic->id, id) == 0) {
+				curnic->hit = 1;
+				break;
+			}
+		}
+		if (cur == nichead) {
+			curnic = malloc(sizeof(struct ovirt_vmnic));
+			INIT_LIST_HEAD(&curnic->nic_link);
+			strcpy(curnic->id, id);
+			list_add(&curnic->nic_link, nichead);
+			curnic->hit = 1;
+		}
+		*curnic->name = 0;
+		*curnic->interface = 0;
+		*curnic->mac = 0;
+		unod = xml_search_children(node, "name");
+		xml_get_node_value(unod, curnic->name, sizeof(curnic->name));
+		unod = xml_search_children(node, "interface");
+		xml_get_node_value(unod, curnic->interface, sizeof(curnic->interface));
+		unod = xml_search_children(node, "mac");
+		if (unod) {
+			unod = xml_search_children(unod, "address");
+			xml_get_node_value(unod, curnic->mac, sizeof(curnic->mac));
+		}
+
+		node = xml_next_node(node);
+	}
+	ovirt_xml_exit(oxml);
+
+	list_for_each_safe(cur, tmp, nichead) {
+		curnic = list_entry(cur, struct ovirt_vmnic, nic_link);
+		if (curnic->hit == 0) {
+			list_del(&curnic->nic_link, nichead);
+			free(curnic);
+		} else
+			curnic->hit = 0;
+	}
+
+	return numnics;
+}
+
+int ovirt_get_vmnics(struct ovirt *ov, struct ovirt_vm *vm)
+{
+	struct curl_slist *header = NULL;
+	int numnics, retv;
+
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, vm->href);
+	strcat(ov->uri, "/nics");
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
+
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_accept_xml);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	curl_slist_free_all(header);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (retv < 0)
+		return 0;
+	numnics = xml_get_nics(ov->dndat, ov->dnlen, &vm->nics);
+	return numnics;
 }
 
 int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)

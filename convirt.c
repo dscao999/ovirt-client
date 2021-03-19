@@ -17,7 +17,7 @@
 #include "ovirt-client.h"
 
 struct remote_view {
-	struct list_head lst;
+	struct list_head vw_link;
 	struct ovirt_vm *vm;
 	pid_t rid;
 };
@@ -31,7 +31,7 @@ static int post_view(struct list_head *head)
 
 	num = 0;
 	list_for_each_safe(cur, tmp, head) {
-		view = list_entry(cur, struct remote_view, lst);
+		view = list_entry(cur, struct remote_view, vw_link);
 		expid = waitpid(view->rid, NULL, WNOHANG);
 		if (expid == -1)
 			fprintf(stderr, "waitpid failed: %s\n",
@@ -109,7 +109,7 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 		exit(1);
 	}
 	view->rid = cpid;
-	list_add(&view->lst, head);
+	list_add(&view->vw_link, head);
 	curvm->con = 1;
 	view->vm = curvm;
 	retv = 1;
@@ -194,7 +194,7 @@ int main(int argc, char *argv[])
 		}
 		i = 0;
 		list_for_each(cur, &vmhead) {
-			curvm = list_entry(cur, struct ovirt_vm, lst);
+			curvm = list_entry(cur, struct ovirt_vm, vm_link);
 			ovirt_vm_action(ov, curvm, "status");
 			printf("[%2d] - %s, state: %s, connected: %d\n", i,
 					curvm->id, curvm->state, curvm->con);
@@ -208,10 +208,11 @@ int main(int argc, char *argv[])
 			break;
 		if (selvm > -1 && selvm < num) {
 			cur = list_index(&vmhead, selvm);
-			curvm = list_entry(cur, struct ovirt_vm, lst);
+			curvm = list_entry(cur, struct ovirt_vm, vm_link);
 			if (curvm->con == 1)
 				fprintf(stderr, "Already connected.\n");
 			else {
+				retv = ovirt_get_vmnics(ov, curvm);
 				retv = connect_vm(ov, curvm, &view_head);
 				if (strcmp(curvm->state, "up") != 0)
 					global_stop = 0;
@@ -223,7 +224,7 @@ int main(int argc, char *argv[])
 		}
 	}
 	list_for_each(cur, &view_head) {
-		cur_view = list_entry(cur, struct remote_view, lst);
+		cur_view = list_entry(cur, struct remote_view, vw_link);
 		kill(cur_view->rid, SIGTERM);
 		if (op_kill== 0)
 			op_kill = 1;
@@ -238,7 +239,7 @@ int main(int argc, char *argv[])
 	}
 	list_for_each_safe(cur, tmp, &vmhead) {
 		list_del(cur, &view_head);
-		curvm = list_entry(cur, struct ovirt_vm, lst);
+		curvm = list_entry(cur, struct ovirt_vm, vm_link);
 		free(curvm);
 	}
 	ovirt_logout(ov);
