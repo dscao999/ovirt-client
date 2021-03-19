@@ -477,7 +477,7 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 		len = get_node_attribute(node, "id", id, sizeof(id));
 		assert(len < sizeof(curvm->id));
 		list_for_each(cur, vmhead) {
-			curvm = list_entry(cur, struct ovirt_vm, lst);
+			curvm = list_entry(cur, struct ovirt_vm, vm_link);
 			if (strcmp(curvm->id, id) == 0) {
 				curvm->hit = 1;
 				break;
@@ -485,22 +485,24 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 		}
 		if (cur == vmhead) {
 			curvm = malloc(sizeof(struct ovirt_vm));
-			INIT_LIST_HEAD(&curvm->lst);
+			INIT_LIST_HEAD(&curvm->vm_link);
+			INIT_LIST_HEAD(&curvm->nics);
+			INIT_LIST_HEAD(&curvm->disks);
 			curvm->state[0] = 0;
 			len = get_node_attribute(node, "href",
 					curvm->href, sizeof(curvm->href));
 			assert(len < sizeof(curvm->href));
 			strcpy(curvm->id, id);
-			list_add(&curvm->lst, vmhead);
+			list_add(&curvm->vm_link, vmhead);
 			curvm->con = 0;
 			curvm->hit = 1;
 		}
 		node = xml_next_element(node);
 	}
 	list_for_each_safe(cur, tmp, vmhead) {
-		curvm = list_entry(cur, struct ovirt_vm, lst);
+		curvm = list_entry(cur, struct ovirt_vm, vm_link);
 		if (curvm->hit == 0) {
-			list_del(&curvm->lst, vmhead);
+			list_del(&curvm->vm_link, vmhead);
 			free(curvm);
 		} else
 			curvm->hit = 0;

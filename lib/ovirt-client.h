@@ -23,12 +23,21 @@ struct ovirt {
 	char dndat[0];
 };
 
+struct vm_nic {
+	struct list_head next;
+	char name[16];
+	char type[16];
+	char mac[32];
+};
+
 struct ovirt_vm {
 	char href[512];
 	char id[128];
 	char state[32];
-	struct list_head lst;
+	struct list_head vm_link;
 	int con, hit;
+	struct list_head nics;
+	struct list_head disks;
 };
 
 
@@ -48,6 +57,8 @@ int ovirt_init_version(struct ovirt *ov);
 int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead);
 int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm,
 		const char *action);
+int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm);
+int ovirt_get_vmnics(struct ovirt *ov, struct ovirt_vm *vm);
 int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv);
 
 #endif /* OVIRT_CLIENT_DSCAO__ */

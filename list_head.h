@@ -17,6 +17,9 @@
 	    for (pos = (head)->next, n = pos->next; pos != (head); \
 			            pos = n, n = pos->next)
 
+#define comp_swap(ptr_dest, oldval, newval) \
+	__sync_val_compare_and_swap(ptr_dest, oldval, newval)
+
 struct list_head;
 struct list_head {
 	struct list_head *prev, *next;
