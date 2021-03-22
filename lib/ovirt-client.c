@@ -78,6 +78,7 @@ static int get_json_token(char *buf, int buflen, const char *jtxt)
 	struct json_object_iterator iter, iend;
 	const char *key, *val;
 
+	*buf = 0;
 	iter = json_object_iter_init_default();
 	iend = json_object_iter_init_default();
 	json = json_tokener_parse(jtxt);
@@ -87,8 +88,11 @@ static int get_json_token(char *buf, int buflen, const char *jtxt)
 	}
 	iter = json_object_iter_begin(json);
 	iend = json_object_iter_end(json);
-	if (json_object_iter_equal(&iter, &iend))
+	if (json_object_iter_equal(&iter, &iend)) {
+		fprintf(stderr, "OAUTH Response has no token: %s\n", jtxt);
+		retv = -(err_base + err_no_auth);
 		goto exit_10;
+	}
 	do {
 		key = json_object_iter_peek_name(&iter);
 		if (key && strcmp(key, "access_token") == 0)
@@ -124,7 +128,6 @@ static int http_check_status(const char *response, const char *msgbody)
 {
 	static const char HTTP_OK[] = "HTTP/1.1 200 OK";
 	static const char HTTP_UNAUTH[] = "HTTP/1.1 401 Unauthorized";
-
 	int retv = 0;
 
 	if (strstr(response, HTTP_OK) == response)
@@ -723,11 +726,13 @@ static int xml_get_nics(const char *xmlstr, int len, struct list_head *nichead)
 		unod = xml_search_children(node, "name");
 		xml_get_node_value(unod, curnic->name, sizeof(curnic->name));
 		unod = xml_search_children(node, "interface");
-		xml_get_node_value(unod, curnic->interface, sizeof(curnic->interface));
+		xml_get_node_value(unod, curnic->interface,
+				sizeof(curnic->interface));
 		unod = xml_search_children(node, "mac");
 		if (unod) {
 			unod = xml_search_children(unod, "address");
-			xml_get_node_value(unod, curnic->mac, sizeof(curnic->mac));
+			xml_get_node_value(unod, curnic->mac,
+					sizeof(curnic->mac));
 		}
 
 		node = xml_next_node(node);
@@ -810,6 +815,7 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 		goto exit_10;
 	len = xml_get_conlink(ov->dndat, ov->dnlen, conlink, sizeof(conlink));
 	assert(len < sizeof(conlink));
+	retv = len;
 	if (len <= 0)
 		goto exit_10;
 	strcat(conlink, "/remoteviewerconnectionfile");
