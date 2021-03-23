@@ -128,9 +128,10 @@ int main(int argc, char *argv[])
 	int i, selvm, op_kill = 0;
 	struct ovirt_vm *curvm;
 	struct sigaction act;
-	struct list_head view_head, vmhead, *cur, *tmp;
+	struct list_head view_head, vmhead, *cur;
 	struct remote_view *cur_view;
 	struct timespec tm;
+	int numnic, numdsk;
 
 	retv = 0;
 	if (argc > 1)
@@ -212,7 +213,6 @@ int main(int argc, char *argv[])
 			if (curvm->con == 1)
 				fprintf(stderr, "Already connected.\n");
 			else {
-				retv = ovirt_get_vmnics(ov, curvm);
 				retv = connect_vm(ov, curvm, &view_head);
 				if (strcmp(curvm->state, "up") != 0)
 					global_stop = 0;
@@ -237,11 +237,14 @@ int main(int argc, char *argv[])
 		num = post_view(&view_head);
 		nanosleep(&tm, NULL);
 	}
-	list_for_each_safe(cur, tmp, &vmhead) {
-		list_del(cur, &view_head);
+	list_for_each(cur, &vmhead) {
 		curvm = list_entry(cur, struct ovirt_vm, vm_link);
-		free(curvm);
+		numnic = ovirt_get_vmnics(ov, curvm);
+		numdsk = ovirt_get_vmdisks(ov, curvm);
+		printf("VM: %s, number nics: %d, number of disks: %d\n",
+				curvm->name, numnic, numdsk);
 	}
+	ovirt_vmlist_free(&vmhead);
 	ovirt_logout(ov);
 
 exit_10:

@@ -24,14 +24,15 @@ struct ovirt {
 };
 
 struct ovirt_vmdisk {
-	char id[128];
+	char href[128];
+	char id[64];
+	char interface[16];
 	struct list_head dsk_link;
 	char name[32];
-	unsigned long act_siz;
-	unsigned long pro_siz;
-	unsigned long tot_siz;
+	unsigned long actsiz;
 	char format[16];
 	char status[8];
+	int hit;
 };
 
 struct ovirt_vmnic {
@@ -44,9 +45,10 @@ struct ovirt_vmnic {
 };
 
 struct ovirt_vm {
-	char href[512];
-	char id[128];
+	char href[128];
+	char id[64];
 	char state[32];
+	char name[32];
 	struct list_head vm_link;
 	int con, hit;
 	struct list_head nics;
@@ -73,5 +75,7 @@ int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm,
 int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm);
 int ovirt_get_vmnics(struct ovirt *ov, struct ovirt_vm *vm);
 int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv);
+
+void ovirt_vmlist_free(struct list_head *vmhead);
 
 #endif /* OVIRT_CLIENT_DSCAO__ */

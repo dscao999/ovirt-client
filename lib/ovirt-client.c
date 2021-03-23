@@ -440,7 +440,7 @@ int ovirt_init_version(struct ovirt *ov)
 static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 {
 	struct ovirt_xml *oxml;
-	xmlNode *node;
+	xmlNode *node, *subn;
 	int numvms;
 	struct list_head *cur, *tmp;
 	struct ovirt_vm *curvm;
@@ -477,6 +477,10 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 			curvm->con = 0;
 			curvm->hit = 1;
 		}
+		subn = xml_search_children(node, "name");
+		if (subn)
+			xml_get_node_value(subn, curvm->name,
+					sizeof(curvm->name));
 		node = xml_next_node(node);
 	}
 	list_for_each_safe(cur, tmp, vmhead) {
@@ -724,15 +728,19 @@ static int xml_get_nics(const char *xmlstr, int len, struct list_head *nichead)
 		*curnic->interface = 0;
 		*curnic->mac = 0;
 		unod = xml_search_children(node, "name");
-		xml_get_node_value(unod, curnic->name, sizeof(curnic->name));
+		if (unod)
+			xml_get_node_value(unod, curnic->name,
+					sizeof(curnic->name));
 		unod = xml_search_children(node, "interface");
-		xml_get_node_value(unod, curnic->interface,
-				sizeof(curnic->interface));
+		if (unod)
+			xml_get_node_value(unod, curnic->interface,
+					sizeof(curnic->interface));
 		unod = xml_search_children(node, "mac");
 		if (unod) {
 			unod = xml_search_children(unod, "address");
-			xml_get_node_value(unod, curnic->mac,
-					sizeof(curnic->mac));
+			if (unod)
+				xml_get_node_value(unod, curnic->mac,
+						sizeof(curnic->mac));
 		}
 
 		node = xml_next_node(node);
@@ -831,4 +839,196 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 exit_10:
 	fclose(fout);
 	return retv;
+}
+
+static int xml_get_disks(const char *xmlbuf, int len, struct list_head *dskhead)
+{
+	struct ovirt_xml *oxml;
+	int numdisks = 0, numb;
+	xmlNode *node, *subn;
+	struct list_head *curdsk, *savhd;
+	struct ovirt_vmdisk *vmdsk;
+	char id[64];
+
+	oxml = ovirt_xml_init(xmlbuf, len);
+	if (!oxml)
+		return numdisks;
+	node = xml_search_element(oxml, "/disk_attachments/disk_attachment");
+	while (node) {
+		numdisks += 1;
+		id[0] = 0;
+		numb = xml_get_node_attr(node, "id", id, sizeof(id));
+		assert(numb > 0 && numb < sizeof(id));
+		list_for_each(curdsk, dskhead) {
+			vmdsk = list_entry(curdsk, struct ovirt_vmdisk,
+					dsk_link);
+			if (strcmp(vmdsk->id, id) == 0) {
+				vmdsk->hit = 1;
+				break;
+			}
+		}
+		if (curdsk == dskhead) {
+			vmdsk = malloc(sizeof(struct ovirt_vmdisk));
+			vmdsk->hit = 1;
+			INIT_LIST_HEAD(&vmdsk->dsk_link);
+			list_add(&vmdsk->dsk_link, dskhead);
+			strcpy(vmdsk->id, id);
+		}
+		vmdsk->interface[0] = 0;
+		subn = xml_search_children(node, "interface");
+		if (subn)
+			numb = xml_get_node_value(subn, vmdsk->interface,
+					sizeof(vmdsk->interface));
+		vmdsk->href[0] = 0;
+		subn = xml_search_children(node, "disk");
+		if (subn)
+			numb = xml_get_node_attr(subn, "href", vmdsk->href,
+					sizeof(vmdsk->href));
+		node = xml_next_node(node);
+	}
+	list_for_each_safe(curdsk, savhd, dskhead) {
+		vmdsk = list_entry(curdsk, struct ovirt_vmdisk, dsk_link);
+		if (vmdsk->hit)
+			vmdsk->hit = 0;
+		else {
+			list_del(curdsk, dskhead);
+			free(vmdsk);
+		}
+	}
+	return numdisks;
+}
+
+static void xml_fill_vmdisk(const char *xmlbuf, int len,
+		struct ovirt_vmdisk *vmdsk)
+{
+	struct ovirt_xml *oxml;
+	xmlNode *node, *subn;
+	char buf[16];
+
+	oxml = ovirt_xml_init(xmlbuf, len);
+	if (!oxml)
+		return;
+	node = xml_search_element(oxml, "/disk");
+	if (!node)
+		goto exit_10;
+	subn = xml_search_children(node, "name");
+	if (subn)
+		xml_get_node_value(subn, vmdsk->name, sizeof(vmdsk->name));
+	subn = xml_search_children(node, "actual_size");
+	buf[0] = 0;
+	if (subn) {
+		xml_get_node_value(subn, buf, sizeof(buf));
+		vmdsk->actsiz = atol(buf);
+	}
+	vmdsk->format[0] = 0;
+	subn = xml_search_children(node, "format");
+	if (subn)
+		xml_get_node_value(subn, vmdsk->format, sizeof(vmdsk->format));
+	vmdsk->status[0] = 0;
+	subn = xml_search_children(node, "status");
+	if (subn)
+		xml_get_node_value(subn, vmdsk->status, sizeof(vmdsk->status));
+
+exit_10:
+	ovirt_xml_exit(oxml);
+}
+
+static void ovirt_fill_vmdisk(struct ovirt *ov, struct ovirt_vmdisk *vmdsk)
+{
+	struct curl_slist *header = NULL;
+	int retv;
+
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, vmdsk->href);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_accept_xml);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	curl_slist_free_all(header);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (retv < 0)
+		return;
+	xml_fill_vmdisk(ov->dndat, ov->dnlen, vmdsk);
+	return;
+}
+
+int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm)
+{
+	struct curl_slist *header = NULL;
+	int numdisks, retv;
+	struct list_head *curdsk;
+	struct ovirt_vmdisk *vmdsk;
+
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, vm->href);
+	strcat(ov->uri, "/diskattachments");
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
+
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_accept_xml);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	curl_slist_free_all(header);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (retv < 0)
+		return 0;
+	numdisks = xml_get_disks(ov->dndat, ov->dnlen, &vm->disks);
+	list_for_each(curdsk, &vm->disks) {
+		vmdsk = list_entry(curdsk, struct ovirt_vmdisk, dsk_link);
+		ovirt_fill_vmdisk(ov, vmdsk);
+	}
+	return numdisks;
+}
+
+static inline void ovirt_vmdisk_list_free(struct list_head *dskhead)
+{
+	struct list_head *cur, *n;
+	struct ovirt_vmdisk *curdsk;
+
+	list_for_each_safe(cur, n, dskhead) {
+		curdsk = list_entry(cur, struct ovirt_vmdisk, dsk_link);
+		list_del(cur, dskhead);
+		free(curdsk);
+	}
+}
+
+static inline void ovirt_vmnic_list_free(struct list_head *nichead)
+{
+	struct list_head *cur, *n;
+	struct ovirt_vmnic *curnic;
+
+	list_for_each_safe(cur, n, nichead) {
+		curnic = list_entry(cur, struct ovirt_vmnic, nic_link);
+		list_del(cur, nichead);
+		free(curnic);
+	}
+}
+
+void ovirt_vmlist_free(struct list_head *vmhead)
+{
+	struct list_head *cur, *n;
+	struct ovirt_vm *curvm;
+
+	list_for_each_safe(cur, n, vmhead) {
+		curvm = list_entry(cur, struct ovirt_vm, vm_link);
+		list_del(cur, vmhead);
+		ovirt_vmnic_list_free(&curvm->nics);
+		ovirt_vmdisk_list_free(&curvm->disks);
+		free(curvm);
+	}
 }
