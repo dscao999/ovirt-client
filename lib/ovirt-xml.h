@@ -15,6 +15,7 @@ static inline void ovirt_xml_exit(struct ovirt_xml *oxml)
 	xmlFreeDoc(oxml->doc);
 	xmlFreeParserCtxt(oxml->ctxt);
 	xmlCleanupParser();
+	free(oxml);
 }
 
 xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath);

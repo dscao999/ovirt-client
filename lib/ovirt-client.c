@@ -483,6 +483,7 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 					sizeof(curvm->name));
 		node = xml_next_node(node);
 	}
+	ovirt_xml_exit(oxml);
 	list_for_each_safe(cur, tmp, vmhead) {
 		curvm = list_entry(cur, struct ovirt_vm, vm_link);
 		if (curvm->hit == 0) {
@@ -688,6 +689,7 @@ int ovirt_download(struct ovirt *ov, const char *link)
 	}
 	len = xml_get_value(oxml, "/action/remote_viewer_connection_file",
 			ov->dndat, ov->max_dnlen);
+	ovirt_xml_exit(oxml);
 	return len;
 }
 
@@ -886,6 +888,7 @@ static int xml_get_disks(const char *xmlbuf, int len, struct list_head *dskhead)
 					sizeof(vmdsk->href));
 		node = xml_next_node(node);
 	}
+	ovirt_xml_exit(oxml);
 	list_for_each_safe(curdsk, savhd, dskhead) {
 		vmdsk = list_entry(curdsk, struct ovirt_vmdisk, dsk_link);
 		if (vmdsk->hit)
