@@ -58,6 +58,7 @@ struct ovirt_vm {
 
 struct ovirt *ovirt_init(const char *host);
 void ovirt_exit(struct ovirt *ov);
+int ovirt_is_engine(struct ovirt *ov);
 
 static inline void ovirt_set_verbose(struct ovirt *ov, int verbose)
 {

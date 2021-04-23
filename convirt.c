@@ -171,6 +171,10 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Error:\n%s\n", ov->errmsg);
 		return 1;
 	}
+	if (ovirt_is_engine(ov) == 1)
+		printf("Yes! A valid oVirt engine service.\n");
+	else
+		printf("No! Not a valid oVirt engine service.\n");
 	ovirt_set_verbose(ov, verbose);
 	retv = ovirt_logon(ov, username, pass, NULL);
 	if (retv < 0)

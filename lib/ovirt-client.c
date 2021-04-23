@@ -398,6 +398,27 @@ void ovirt_logout(struct ovirt *ov)
 				"Cannot invalidate session cookie.\n");
 }
 	
+int ovirt_is_engine(struct ovirt *ov)
+{
+	int retv;
+
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, ovirt_api);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
+	ov->dnlen = 0;
+	ov->hdlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	ov->dndat[ov->dnlen] = 0;
+	ov->hdbuf[ov->hdlen] = 0;
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (-retv == err_base + err_unauth)
+		retv = 1;
+	else
+		retv = 0;
+	return retv;
+}
+
 int ovirt_init_version(struct ovirt *ov)
 {
 	struct ovirt_xml *oxml;
