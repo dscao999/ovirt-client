@@ -63,7 +63,7 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 {
 	int retv = 0, num, sact;
 	struct remote_view *view;
-	char vvname[64];
+	char vvname[128];
 	pid_t cpid;
 
 	sact = 0;
@@ -165,7 +165,7 @@ int main(int argc, char *argv[])
 		return 5;
 	}
 
-	ov = ovirt_init("engine.cluster");
+	ov = ovirt_init("engine.lidc.com");
 	if (!ov) {
 		fprintf(stderr, "CURL Initialization failed.\n");
 		fprintf(stderr, "Error:\n%s\n", ov->errmsg);
