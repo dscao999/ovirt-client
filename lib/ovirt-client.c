@@ -473,11 +473,9 @@ static void add_vm_node(xmlNode *node, const char *vmid,
 	INIT_LIST_HEAD(&curvm->nics);
 	INIT_LIST_HEAD(&curvm->disks);
 	curvm->state[0] = 0;
-	len = xml_get_node_attr(node, "href",
-			curvm->href, sizeof(curvm->href));
+	len = xml_get_node_attr(node, "href", curvm->href, sizeof(curvm->href));
 	assert(len < sizeof(curvm->href));
 	strcpy(curvm->id, vmid);
-	list_add(&curvm->vm_link, vmhead);
 	curvm->con = 0;
 	curvm->hit = 1;
 	curvm->pool = NULL;
@@ -497,6 +495,7 @@ static void add_vm_node(xmlNode *node, const char *vmid,
 	subn = xml_search_children(node, "name");
 	if (subn)
 		xml_get_node_value(subn, curvm->name, sizeof(curvm->name));
+	list_add(&curvm->vm_link, vmhead);
 }
 
 static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
@@ -533,6 +532,8 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
 		}
 		if (cur == vmhead)
 			add_vm_node(node, id, vmhead, vmpool);
+		else
+			curvm->pool->vmsnow += 1;
 		node = xml_next_node(node);
 	}
 	ovirt_xml_exit(oxml);
@@ -1087,6 +1088,123 @@ void ovirt_vmlist_free(struct list_head *vmhead)
 		list_del(cur, vmhead);
 		ovirt_vmnic_list_free(&curvm->nics);
 		ovirt_vmdisk_list_free(&curvm->disks);
+		if (curvm->pool)
+			curvm->pool->vmsnow -= 1;
 		free(curvm);
 	}
+}
+
+void ovirt_vmpool_free(struct list_head *vmpool)
+{
+	struct ovirt_pool *curpool;
+	struct list_head *cur, *tmp;
+
+	list_for_each_safe(cur, tmp, vmpool) {
+		curpool = list_entry(cur, struct ovirt_pool, pool_link);
+		if (curpool->vmsnow != 0) {
+			fprintf(stderr, "VM node still attached to pool: " \
+					"%s, pool node kept.", curpool->id);
+			continue;
+		}
+		list_del(cur, vmpool);
+		free(curpool);
+	}
+}
+
+static int xml_get_vmpools(const char *xmlstr, int len,
+		struct list_head *vmpool)
+{
+	struct list_head *cur, *tmp;
+	struct ovirt_xml *oxml;
+	struct ovirt_pool *curpool;
+	xmlNode *node, *subnode, *lnknode;
+	int numpools;
+	static const char xpath[] = "/vm_pools/vm_pool";
+	char id[64], vmsmax[4];
+
+	oxml = ovirt_xml_init(xmlstr, len);
+	if (!oxml)
+		return 0;
+	node = xml_search_element(oxml, xpath);
+	numpools = 0;
+	while (node) {
+		numpools += 1;
+		len = xml_get_node_attr(node, "id", id, sizeof(id));
+		assert(len < sizeof(curpool->id));
+		list_for_each(cur, vmpool) {
+			curpool = list_entry(cur, struct ovirt_pool, pool_link);
+			if (strcmp(curpool->id, id) == 0) {
+				curpool->hit = 1;
+				break;
+			}
+		}
+		if (cur == vmpool) {
+			curpool = malloc(sizeof(struct ovirt_pool));
+			assert(curpool != NULL);
+			strcpy(curpool->id, id);
+			subnode = xml_search_children(node, "name");
+			curpool->name[0] = 0;
+			xml_get_node_value(subnode, curpool->name, sizeof(curpool->name));
+			vmsmax[0] = '0';
+			vmsmax[1] = 0;
+			subnode = xml_search_children(node, "max_user_vms");
+			xml_get_node_value(subnode, vmsmax, sizeof(vmsmax));
+			curpool->vmsmax = atoi(vmsmax);
+			curpool->vmsnow = 0;
+			curpool->dangle = 0;
+			curpool->hit = 1;
+			INIT_LIST_HEAD(&curpool->pool_link);
+			subnode = xml_search_children(node, "actions");
+			lnknode = xml_search_children(subnode, "link");
+			curpool->alloc[0] = 0;
+			len = xml_get_node_attr(lnknode, "href", curpool->alloc, sizeof(curpool->alloc));
+			list_add(&curpool->pool_link, vmpool);
+		}
+		node = xml_next_node(node);
+	}
+	ovirt_xml_exit(oxml);
+
+	list_for_each_safe(cur, tmp, vmpool) {
+		curpool = list_entry(cur, struct ovirt_pool, pool_link);
+		if (curpool->hit == 0) {
+			if (curpool->vmsnow > 0) {
+				curpool->dangle = 1;
+				fprintf(stderr, "VM Pool deleted, but vm remains.\n");
+			} else {
+				list_del(cur, vmpool);
+				free(curpool);
+			}
+		} else
+			curpool->hit = 0;
+	}
+	return numpools;
+}
+
+static const char pools_path[] = "/ovirt-engine/api/vmpools";
+int ovirt_list_vmpool(struct ovirt *ov, struct list_head *vmpool)
+{
+	struct curl_slist *header = NULL;
+	int numpools, retv;
+
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, pools_path);
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
+
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_accept_xml);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_perform(ov->curl);
+	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	curl_slist_free_all(header);
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (retv < 0)
+		return 0;
+	numpools = xml_get_vmpools(ov->dndat, ov->dnlen, vmpool);
+	return numpools;
 }

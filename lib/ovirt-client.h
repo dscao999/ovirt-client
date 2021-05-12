@@ -50,6 +50,7 @@ struct ovirt_pool {
 	char name[32];
 	struct list_head pool_link;
 	int vmsnow, vmsmax;
+	int hit, dangle;
 };
 
 struct ovirt_vm {
@@ -89,5 +90,8 @@ int ovirt_get_vmnics(struct ovirt *ov, struct ovirt_vm *vm);
 int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv);
 
 void ovirt_vmlist_free(struct list_head *vmhead);
+
+int ovirt_list_vmpool(struct ovirt *ov, struct list_head *vmpool);
+void ovirt_vmpool_free(struct list_head *vmpool);
 
 #endif /* OVIRT_CLIENT_DSCAO__ */

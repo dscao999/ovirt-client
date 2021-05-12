@@ -124,14 +124,15 @@ int main(int argc, char *argv[])
 {
 	struct ovirt *ov;
 	const char *username, *pass;
-	int retv, verbose = 0, num, version;
+	int retv, verbose = 0, numvms, version, num;
 	int i, selvm, op_kill = 0;
 	struct ovirt_vm *curvm;
+	struct ovirt_pool *curpool;
 	struct sigaction act;
 	struct list_head view_head, vmhead, vmpool,*cur;
 	struct remote_view *cur_view;
 	struct timespec tm;
-	int numnic, numdsk;
+	int numnic, numdsk, numpools;
 
 	retv = 0;
 	if (argc > 1)
@@ -174,8 +175,10 @@ int main(int argc, char *argv[])
 	}
 	if (ovirt_is_engine(ov) == 1)
 		printf("Yes! A valid oVirt engine service.\n");
-	else
+	else {
 		printf("No! Not a valid oVirt engine service.\n");
+		exit(5);
+	}
 	ovirt_set_verbose(ov, verbose);
 	retv = ovirt_logon(ov, username, pass, NULL);
 	if (retv < 0)
@@ -191,8 +194,11 @@ int main(int argc, char *argv[])
 		goto exit_10;
 	}
 	while (global_stop == 0) {
-		num = ovirt_list_vms(ov, &vmhead, &vmpool);
-		if (num <= 0) {
+		numpools = ovirt_list_vmpool(ov, &vmpool);
+		if (numpools > 0)
+			printf("My pools: %d\n", numpools);
+		numvms = ovirt_list_vms(ov, &vmhead, &vmpool);
+		if (numvms <= 0) {
 			fprintf(stderr, "No usable VMs now: %s.\n",
 					username);
 			sleep(5);
@@ -212,7 +218,7 @@ int main(int argc, char *argv[])
 		scanf("%d", &selvm);
 		if (selvm == -1)
 			break;
-		if (selvm > -1 && selvm < num) {
+		if (selvm > -1 && selvm < numvms) {
 			cur = list_index(&vmhead, selvm);
 			curvm = list_entry(cur, struct ovirt_vm, vm_link);
 			if (curvm->con == 1)
@@ -242,6 +248,10 @@ int main(int argc, char *argv[])
 		num = post_view(&view_head);
 		nanosleep(&tm, NULL);
 	}
+	list_for_each(cur, &vmpool) {
+		curpool = list_entry(cur, struct ovirt_pool, pool_link);
+		printf("Pool: %s, Max: %d, Now: %d\n", curpool->id, curpool->vmsmax, curpool->vmsnow);
+	}
 	list_for_each(cur, &vmhead) {
 		curvm = list_entry(cur, struct ovirt_vm, vm_link);
 		numnic = ovirt_get_vmnics(ov, curvm);
@@ -250,6 +260,11 @@ int main(int argc, char *argv[])
 				curvm->name, numnic, numdsk);
 	}
 	ovirt_vmlist_free(&vmhead);
+	list_for_each(cur, &vmpool) {
+		curpool = list_entry(cur, struct ovirt_pool, pool_link);
+		printf("Pool: %s, Max: %d, Now: %d\n", curpool->id, curpool->vmsmax, curpool->vmsnow);
+	}
+	ovirt_vmpool_free(&vmpool);
 	ovirt_logout(ov);
 
 exit_10:

@@ -131,6 +131,9 @@ int xml_get_node_attr(xmlNode *node, const char *attr, char *buf, int maxlen)
 	int len;
 
 	len = 0;
+	if (!node)
+		return len;
+
 	prop = node->properties;
 	while (prop) {
 		assert(prop->type == XML_ATTRIBUTE_NODE && prop->name);
