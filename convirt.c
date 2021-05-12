@@ -195,20 +195,23 @@ int main(int argc, char *argv[])
 	}
 	while (global_stop == 0) {
 		numpools = ovirt_list_vmpool(ov, &vmpool);
-		if (numpools > 0)
-			printf("My pools: %d\n", numpools);
 		numvms = ovirt_list_vms(ov, &vmhead, &vmpool);
-		if (numvms <= 0) {
-			fprintf(stderr, "No usable VMs now: %s.\n",
+		if (numvms < 0 || numpools < 0) {
+			fprintf(stderr, "Cannot get resources for %s.\n",
 					username);
-			sleep(5);
-			continue;
+			exit(5);
 		}
 		i = 0;
+		list_for_each(cur, &vmpool) {
+			curpool = list_entry(cur, struct ovirt_pool, pool_link);
+			printf("[%2d] - %s, Max VM: %4d, Allocated: %1d\n", i,
+					curpool->id, curpool->vmsmax, curpool->vmsnow);
+			i++;
+		}
 		list_for_each(cur, &vmhead) {
 			curvm = list_entry(cur, struct ovirt_vm, vm_link);
 			ovirt_vm_action(ov, curvm, "status");
-			printf("[%2d] - %s, state: %s, connected: %d\n", i,
+			printf("[%2d] - %s,  state: %4s, connected: %d\n", i,
 					curvm->id, curvm->state, curvm->con);
 			i++;
 		}
@@ -216,10 +219,15 @@ int main(int argc, char *argv[])
 				"[>= %d, refresh]: ", i);
 		fflush(stdout);
 		scanf("%d", &selvm);
-		if (selvm == -1)
+		if (selvm <= -1)
 			break;
-		if (selvm > -1 && selvm < numvms) {
-			cur = list_index(&vmhead, selvm);
+		else if (selvm < numpools) {
+			cur = list_index(&vmpool, selvm);
+			curpool = list_entry(cur, struct ovirt_pool, pool_link);
+			if (ovirt_pool_allocatvm(ov, curpool) <= 0)
+				fprintf(stderr, "Cannot allocate more VM.\n");
+		} else if (selvm >= numpools && selvm < numvms + numpools) {
+			cur = list_index(&vmhead, selvm - numpools);
 			curvm = list_entry(cur, struct ovirt_vm, vm_link);
 			if (curvm->con == 1)
 				fprintf(stderr, "Already connected.\n");

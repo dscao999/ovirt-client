@@ -82,7 +82,7 @@ int ovirt_init_version(struct ovirt *ov);
 int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,
 		struct list_head *vmpool);
 int ovirt_list_pools(struct ovirt *ov, struct list_head *vmpool);
-int ovirt_pool_allocatvm(struct ovirt *ov, struct ovirt_pool *vmpool);
+int ovirt_pool_allocatvm(struct ovirt *ov, struct ovirt_pool *pool);
 int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm,
 		const char *action);
 int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm);

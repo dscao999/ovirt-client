@@ -513,10 +513,10 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
 	oxml = ovirt_xml_init(xmlstr, len);
 	if (!oxml)
 		return 0;
-	list_for_each(cur, vmpool) {
+/*	list_for_each(cur, vmpool) {
 		curpool = list_entry(cur, struct ovirt_pool, pool_link);
 		curpool->vmsnow = 0;
-	}
+	}*/
 	node = xml_search_element(oxml, xpath);
 	numvms = 0;
 	while (node) {
@@ -532,8 +532,8 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
 		}
 		if (cur == vmhead)
 			add_vm_node(node, id, vmhead, vmpool);
-		else
-			curvm->pool->vmsnow += 1;
+/*		else
+			curvm->pool->vmsnow += 1;*/
 		node = xml_next_node(node);
 	}
 	ovirt_xml_exit(oxml);
@@ -1207,4 +1207,37 @@ int ovirt_list_vmpool(struct ovirt *ov, struct list_head *vmpool)
 		return 0;
 	numpools = xml_get_vmpools(ov->dndat, ov->dnlen, vmpool);
 	return numpools;
+}
+
+int ovirt_pool_allocatvm(struct ovirt *ov, struct ovirt_pool *pool)
+{
+	struct curl_slist *header = NULL;
+	int retv = 0, numvm = 1;
+
+	if (pool->vmsnow == pool->vmsmax)
+		return 0;
+
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, pool->alloc);
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
+	header = curl_slist_append(header, hd_content_xml);
+	header = curl_slist_append(header, hd_accept_xml);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, action_empty);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, action_empty_len);
+	curl_easy_perform(ov->curl);
+	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	curl_slist_free_all(header);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+	if (retv < 0)
+		numvm = 0;
+	return numvm;
 }
