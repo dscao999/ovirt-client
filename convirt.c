@@ -65,6 +65,7 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 	struct remote_view *view;
 	char vvname[128];
 	pid_t cpid;
+	int count;
 
 	sact = 0;
 	if (strcmp(curvm->state, "down") == 0 ||
@@ -75,12 +76,20 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 	}
 	if (retv != 0)
 		goto exit_10;
+	count = 0;
 	while (strcmp(curvm->state, "up") != 0 && global_stop == 0 &&
 			retv == 0) {
 		sleep(3);
 		retv = ovirt_vm_action(ov, curvm, "status");
 		printf(".");
 		fflush(stdout);
+		count += 1;
+		if (count % 10 == 0)
+			printf("%s", curvm->state);
+		if (count == 30) {
+			fprintf(stderr, "Abort starting the vm.\n");
+			retv = -100;
+		}
 	}
 	if (sact)
 		printf("\n");

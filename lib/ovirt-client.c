@@ -896,6 +896,8 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 
 exit_10:
 	fclose(fout);
+	if (retv < 0)
+		remove(vv);
 	return retv;
 }
 
