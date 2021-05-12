@@ -44,6 +44,14 @@ struct ovirt_vmnic {
 	int hit;
 };
 
+struct ovirt_pool {
+	char alloc[128];
+	char id[64];
+	char name[32];
+	struct list_head pool_link;
+	int vmsnow, vmsmax;
+};
+
 struct ovirt_vm {
 	char href[128];
 	char id[64];
@@ -53,8 +61,8 @@ struct ovirt_vm {
 	int con, hit;
 	struct list_head nics;
 	struct list_head disks;
+	struct ovirt_pool *pool;
 };
-
 
 struct ovirt *ovirt_init(const char *host);
 void ovirt_exit(struct ovirt *ov);
@@ -70,7 +78,10 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 void ovirt_logout(struct ovirt *ov);
 
 int ovirt_init_version(struct ovirt *ov);
-int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead);
+int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,
+		struct list_head *vmpool);
+int ovirt_list_pools(struct ovirt *ov, struct list_head *vmpool);
+int ovirt_pool_allocatvm(struct ovirt *ov, struct ovirt_pool *vmpool);
 int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm,
 		const char *action);
 int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm);

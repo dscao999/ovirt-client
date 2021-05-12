@@ -458,10 +458,53 @@ int ovirt_init_version(struct ovirt *ov)
 	return retv;
 }
 
-static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
+static void add_vm_node(xmlNode *node, const char *vmid,
+		struct list_head *vmhead, struct list_head *vmpool)
+{
+	struct ovirt_vm *curvm;
+	xmlNode *pool_node, *subn;
+	char plid[64];
+	struct list_head *cur;
+	struct ovirt_pool *curpool;
+	int len;
+
+	curvm = malloc(sizeof(struct ovirt_vm));
+	INIT_LIST_HEAD(&curvm->vm_link);
+	INIT_LIST_HEAD(&curvm->nics);
+	INIT_LIST_HEAD(&curvm->disks);
+	curvm->state[0] = 0;
+	len = xml_get_node_attr(node, "href",
+			curvm->href, sizeof(curvm->href));
+	assert(len < sizeof(curvm->href));
+	strcpy(curvm->id, vmid);
+	list_add(&curvm->vm_link, vmhead);
+	curvm->con = 0;
+	curvm->hit = 1;
+	curvm->pool = NULL;
+	pool_node = xml_search_children(node, "vm_pool");
+	if (pool_node) {
+		len = xml_get_node_attr(pool_node, "id", plid, sizeof(plid));
+		list_for_each(cur, vmpool) {
+			curpool = list_entry(cur, struct ovirt_pool, pool_link);
+			if (strcmp(curpool->id, plid) == 0)
+				break;
+		}
+		if (cur != vmpool) {
+			curvm->pool = curpool;
+			curpool->vmsnow += 1;
+		}
+	}
+	subn = xml_search_children(node, "name");
+	if (subn)
+		xml_get_node_value(subn, curvm->name, sizeof(curvm->name));
+}
+
+static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
+		struct list_head *vmpool)
 {
 	struct ovirt_xml *oxml;
-	xmlNode *node, *subn;
+	struct ovirt_pool *curpool;
+	xmlNode *node;
 	int numvms;
 	struct list_head *cur, *tmp;
 	struct ovirt_vm *curvm;
@@ -471,6 +514,10 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 	oxml = ovirt_xml_init(xmlstr, len);
 	if (!oxml)
 		return 0;
+	list_for_each(cur, vmpool) {
+		curpool = list_entry(cur, struct ovirt_pool, pool_link);
+		curpool->vmsnow = 0;
+	}
 	node = xml_search_element(oxml, xpath);
 	numvms = 0;
 	while (node) {
@@ -484,24 +531,8 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 				break;
 			}
 		}
-		if (cur == vmhead) {
-			curvm = malloc(sizeof(struct ovirt_vm));
-			INIT_LIST_HEAD(&curvm->vm_link);
-			INIT_LIST_HEAD(&curvm->nics);
-			INIT_LIST_HEAD(&curvm->disks);
-			curvm->state[0] = 0;
-			len = xml_get_node_attr(node, "href",
-					curvm->href, sizeof(curvm->href));
-			assert(len < sizeof(curvm->href));
-			strcpy(curvm->id, id);
-			list_add(&curvm->vm_link, vmhead);
-			curvm->con = 0;
-			curvm->hit = 1;
-		}
-		subn = xml_search_children(node, "name");
-		if (subn)
-			xml_get_node_value(subn, curvm->name,
-					sizeof(curvm->name));
+		if (cur == vmhead)
+			add_vm_node(node, id, vmhead, vmpool);
 		node = xml_next_node(node);
 	}
 	ovirt_xml_exit(oxml);
@@ -509,6 +540,8 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 		curvm = list_entry(cur, struct ovirt_vm, vm_link);
 		if (curvm->hit == 0) {
 			list_del(&curvm->vm_link, vmhead);
+			if (curvm->pool)
+				curvm->pool->vmsnow -= 1;
 			free(curvm);
 		} else
 			curvm->hit = 0;
@@ -518,7 +551,8 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead)
 
 static const char ovirt_vms[] = "/ovirt-engine/api/vms";
 
-int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead)
+int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,
+		struct list_head *vmpool)
 {
 	struct curl_slist *header = NULL;
 	int retv, numvms;
@@ -543,7 +577,7 @@ int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead)
 		fprintf(stderr, "Cannot list VMs.\n");
 		return retv;
 	}
-	numvms = xml_getvms(ov->dndat, ov->dnlen, vmhead);
+	numvms = xml_getvms(ov->dndat, ov->dnlen, vmhead, vmpool);
 	return numvms;
 }
 

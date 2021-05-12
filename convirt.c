@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
 	int i, selvm, op_kill = 0;
 	struct ovirt_vm *curvm;
 	struct sigaction act;
-	struct list_head view_head, vmhead, *cur;
+	struct list_head view_head, vmhead, vmpool,*cur;
 	struct remote_view *cur_view;
 	struct timespec tm;
 	int numnic, numdsk;
@@ -147,6 +147,7 @@ int main(int argc, char *argv[])
 
 	INIT_LIST_HEAD(&view_head);
 	INIT_LIST_HEAD(&vmhead);
+	INIT_LIST_HEAD(&vmpool);
 	memset(&act, 0, sizeof(act));
 	act.sa_handler = sig_handler;
 	if (sigaction(SIGCHLD, &act, NULL) == -1) {
@@ -190,7 +191,7 @@ int main(int argc, char *argv[])
 		goto exit_10;
 	}
 	while (global_stop == 0) {
-		num = ovirt_list_vms(ov, &vmhead);
+		num = ovirt_list_vms(ov, &vmhead, &vmpool);
 		if (num <= 0) {
 			fprintf(stderr, "No usable VMs now: %s.\n",
 					username);
