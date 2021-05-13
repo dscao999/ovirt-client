@@ -51,7 +51,7 @@ struct ovirt_xml * ovirt_xml_init(const char *xmlbuf, int len)
 {
 	struct ovirt_xml *oxml;
 
-	oxml = malloc(sizeof(struct ovirt_xml));
+	oxml = (struct ovirt_xml *)malloc(sizeof(struct ovirt_xml));
 	if (!oxml) {
 		fprintf(stderr, "Out of Memory!\n");
 		return NULL;
@@ -107,7 +107,7 @@ xmlNode * xml_search_element(struct ovirt_xml *oxml, const char *xpath)
 	xmlNode *cur = NULL, *found;
 	char *pbuf, *nname;
 
-	pbuf = malloc(strlen(xpath) + 1);
+	pbuf = (char *)malloc(strlen(xpath) + 1);
 	strcpy(pbuf, xpath);
 
 	cur = xmlDocGetRootElement(oxml->doc);

@@ -26,7 +26,7 @@ static const unsigned short err_no_jsonid = 0x108;
 
 static size_t upload(char *buf, size_t siz, size_t nitems, void *usrdat)
 {
-	struct ovirt *ov = usrdat;
+	struct ovirt *ov = (struct ovirt *)usrdat;
 	int uplen, buflen, datlen;
 
 	buflen = siz * nitems;
@@ -41,7 +41,7 @@ static size_t upload(char *buf, size_t siz, size_t nitems, void *usrdat)
 
 static size_t dnload(char *buf, size_t siz, size_t nmemb, void *usrdat)
 {
-	struct ovirt *ov = usrdat;
+	struct ovirt *ov = (struct ovirt *)usrdat;
 	int dnlen, lenrem;
 
 	dnlen = nmemb * siz;
@@ -57,7 +57,7 @@ static size_t dnload(char *buf, size_t siz, size_t nmemb, void *usrdat)
 
 static size_t hdrecv(char *buf, size_t siz, size_t nitems, void *usrdat)
 {
-	struct ovirt *ov = usrdat;
+	struct ovirt *ov = (struct ovirt *)usrdat;
 	int hdlen, lenrem;
 
 	hdlen = siz * nitems;
@@ -111,7 +111,7 @@ static int get_json_token(char *buf, int buflen, const char *jtxt)
 		goto exit_10;
 	}
 	val = json_object_get_string(jval);
-	if (strlen(val) + 22 >= buflen) {
+	if ((int)strlen(val) + 22 >= buflen) {
 		fprintf(stderr, "access token too long, overflow.\n");
 		retv = -(err_base + err_overflow);
 		goto exit_10;
@@ -194,7 +194,7 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 	static const char hd_basic_auth[] = "Authorization: Basic ";
 
 	len = sprintf(ov->updat, pasfmt, user, domain, pass);
-	assert(len < sizeof(ov->updat));
+	assert(len < (int)sizeof(ov->updat));
 	len = bin2str_b64(ov->dndat, ov->max_dnlen,
 			(const unsigned char *)ov->updat, len);
 	ov->dndat[len] = 0;
@@ -228,8 +228,8 @@ struct ovirt * ovirt_init(const char *ohost)
 {
 	struct ovirt *ov;
 
-	ov = mmap(NULL, OVIRT_SIZE + OVIRT_HEADER_SIZE, PROT_READ|PROT_WRITE,
-			MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+	ov = (struct ovirt *)mmap(NULL, OVIRT_SIZE + OVIRT_HEADER_SIZE,
+			PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 	if (ov == MAP_FAILED) {
 		fprintf(stderr, "Out of Memory!\n");
 		return NULL;
@@ -237,7 +237,7 @@ struct ovirt * ovirt_init(const char *ohost)
 	ov->buflen = OVIRT_SIZE + OVIRT_HEADER_SIZE;
 	ov->max_dnlen = OVIRT_SIZE - sizeof(struct ovirt);
 	ov->max_hdlen = OVIRT_HEADER_SIZE;
-	ov->hdbuf = ((void *)ov) + OVIRT_SIZE;
+	ov->hdbuf = ((char *)ov) + OVIRT_SIZE;
 	strcpy(ov->engine, "https://");
 	strcat(ov->engine, ohost);
 	curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -450,7 +450,7 @@ int ovirt_init_version(struct ovirt *ov)
 		len = xml_get_value(oxml, "/api/product_info/version/major",
 				ov->dndat, ov->max_dnlen);
 		ovirt_xml_exit(oxml);
-		if (len > 0 && len < ov->max_dnlen) {
+		if (len > 0 && (unsigned int)len < ov->max_dnlen) {
 			ov->version = atoi(ov->dndat);
 			retv = ov->version;
 		}
@@ -468,13 +468,13 @@ static void add_vm_node(xmlNode *node, const char *vmid,
 	struct ovirt_pool *curpool;
 	int len;
 
-	curvm = malloc(sizeof(struct ovirt_vm));
+	curvm = (struct ovirt_vm *)malloc(sizeof(struct ovirt_vm));
 	INIT_LIST_HEAD(&curvm->vm_link);
 	INIT_LIST_HEAD(&curvm->nics);
 	INIT_LIST_HEAD(&curvm->disks);
 	curvm->state[0] = 0;
 	len = xml_get_node_attr(node, "href", curvm->href, sizeof(curvm->href));
-	assert(len < sizeof(curvm->href));
+	assert((unsigned int)len < sizeof(curvm->href));
 	strcpy(curvm->id, vmid);
 	curvm->con = 0;
 	curvm->hit = 1;
@@ -517,7 +517,7 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
 	while (node) {
 		numvms += 1;
 		len = xml_get_node_attr(node, "id", id, sizeof(id));
-		assert(len < sizeof(curvm->id));
+		assert((unsigned int)len < sizeof(curvm->id));
 		list_for_each(cur, vmhead) {
 			curvm = list_entry(cur, struct ovirt_vm, vm_link);
 			if (strcmp(curvm->id, id) == 0) {
@@ -625,7 +625,7 @@ static int ovirt_vm_getstate(struct ovirt *ov, struct ovirt_vm *vm)
 	if (oxml) {
 		len = xml_get_value(oxml, "/vm/status", vm->state,
 				sizeof(vm->state));
-		assert(len < sizeof(vm->state));
+		assert((unsigned int)len < sizeof(vm->state));
 		vm->state[len] = 0;
 		ovirt_xml_exit(oxml);
 	}
@@ -760,7 +760,7 @@ static int xml_get_nics(const char *xmlstr, int len, struct list_head *nichead)
 	while (node) {
 		numnics += 1;
 		len = xml_get_node_attr(node, "id", id, sizeof(id));
-		assert(len < sizeof(curnic->id));
+		assert((unsigned int)len < sizeof(curnic->id));
 		list_for_each(cur, nichead) {
 			curnic = list_entry(cur, struct ovirt_vmnic, nic_link);
 			if (strcmp(curnic->id, id) == 0) {
@@ -769,7 +769,8 @@ static int xml_get_nics(const char *xmlstr, int len, struct list_head *nichead)
 			}
 		}
 		if (cur == nichead) {
-			curnic = malloc(sizeof(struct ovirt_vmnic));
+			curnic = (struct ovirt_vmnic *)malloc(
+					sizeof(struct ovirt_vmnic));
 			INIT_LIST_HEAD(&curnic->nic_link);
 			strcpy(curnic->id, id);
 			list_add(&curnic->nic_link, nichead);
@@ -873,7 +874,7 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 	if (retv < 0)
 		goto exit_10;
 	len = xml_get_conlink(ov->dndat, ov->dnlen, conlink, sizeof(conlink));
-	assert(len < sizeof(conlink));
+	assert((unsigned int)len < sizeof(conlink));
 	retv = len;
 	if (len <= 0)
 		goto exit_10;
@@ -911,7 +912,7 @@ static int xml_get_disks(const char *xmlbuf, int len, struct list_head *dskhead)
 		numdisks += 1;
 		id[0] = 0;
 		numb = xml_get_node_attr(node, "id", id, sizeof(id));
-		assert(numb > 0 && numb < sizeof(id));
+		assert(numb > 0 && numb < (int)sizeof(id));
 		list_for_each(curdsk, dskhead) {
 			vmdsk = list_entry(curdsk, struct ovirt_vmdisk,
 					dsk_link);
@@ -921,7 +922,8 @@ static int xml_get_disks(const char *xmlbuf, int len, struct list_head *dskhead)
 			}
 		}
 		if (curdsk == dskhead) {
-			vmdsk = malloc(sizeof(struct ovirt_vmdisk));
+			vmdsk = (struct ovirt_vmdisk *)malloc(sizeof(
+						struct ovirt_vmdisk));
 			vmdsk->hit = 1;
 			INIT_LIST_HEAD(&vmdsk->dsk_link);
 			list_add(&vmdsk->dsk_link, dskhead);
@@ -1125,7 +1127,7 @@ static int xml_get_vmpools(const char *xmlstr, int len,
 	while (node) {
 		numpools += 1;
 		len = xml_get_node_attr(node, "id", id, sizeof(id));
-		assert(len < sizeof(curpool->id));
+		assert(len < (int)sizeof(curpool->id));
 		list_for_each(cur, vmpool) {
 			curpool = list_entry(cur, struct ovirt_pool, pool_link);
 			if (strcmp(curpool->id, id) == 0) {
@@ -1134,7 +1136,8 @@ static int xml_get_vmpools(const char *xmlstr, int len,
 			}
 		}
 		if (cur == vmpool) {
-			curpool = malloc(sizeof(struct ovirt_pool));
+			curpool = (struct ovirt_pool *)malloc(sizeof(
+						struct ovirt_pool));
 			assert(curpool != NULL);
 			strcpy(curpool->id, id);
 			subnode = xml_search_children(node, "name");
