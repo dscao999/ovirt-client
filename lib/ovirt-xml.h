@@ -4,6 +4,10 @@
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct ovirt_xml {
 	xmlParserCtxtPtr ctxt;
 	xmlDocPtr doc;
@@ -36,4 +40,7 @@ int xml_get_node_attr(xmlNode *node, const char *attr, char *buf, int buflen);
 int xml_get_node_value(xmlNode *node, char *buf, int buflen);
 int xml_get_value(struct ovirt_xml *oxml, const char *xpath, char *buf, int len);
 
+#ifdef __cplusplus
+}
+#endif
 #endif /* OVIRT_XML_DSCAO__ */

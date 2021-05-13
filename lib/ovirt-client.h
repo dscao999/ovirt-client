@@ -3,6 +3,10 @@
 #include <curl/curl.h>
 #include "list_head.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum OVIRT_AUTH {AUTH_NONE, AUTH_BASIC, AUTH_OAUTH, AUTH_SESSION};
 struct ovirt {
 	CURL *curl;
@@ -94,4 +98,7 @@ void ovirt_vmlist_free(struct list_head *vmhead);
 int ovirt_list_vmpool(struct ovirt *ov, struct list_head *vmpool);
 void ovirt_vmpool_free(struct list_head *vmpool);
 
+#ifdef __cplusplus
+}
+#endif
 #endif /* OVIRT_CLIENT_DSCAO__ */

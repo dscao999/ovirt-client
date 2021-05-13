@@ -502,7 +502,6 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
 		struct list_head *vmpool)
 {
 	struct ovirt_xml *oxml;
-	struct ovirt_pool *curpool;
 	xmlNode *node;
 	int numvms;
 	struct list_head *cur, *tmp;
@@ -513,10 +512,6 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
 	oxml = ovirt_xml_init(xmlstr, len);
 	if (!oxml)
 		return 0;
-/*	list_for_each(cur, vmpool) {
-		curpool = list_entry(cur, struct ovirt_pool, pool_link);
-		curpool->vmsnow = 0;
-	}*/
 	node = xml_search_element(oxml, xpath);
 	numvms = 0;
 	while (node) {
@@ -532,8 +527,6 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
 		}
 		if (cur == vmhead)
 			add_vm_node(node, id, vmhead, vmpool);
-/*		else
-			curvm->pool->vmsnow += 1;*/
 		node = xml_next_node(node);
 	}
 	ovirt_xml_exit(oxml);

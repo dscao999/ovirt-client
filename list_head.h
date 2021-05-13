@@ -1,6 +1,10 @@
 #ifndef LIST_HEAD_DSCAO__
 #define LIST_HEAD_DSCAO__
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef offsetof
 #define offsetof(type, member)  __builtin_offsetof (type, member)
 #endif
@@ -70,5 +74,9 @@ static inline struct list_head *list_index(struct list_head *head, int i)
 		cur = NULL;
 	return cur;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* LIST_HEAD_DSCAO__ */
