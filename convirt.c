@@ -133,7 +133,7 @@ int main(int argc, char *argv[])
 {
 	struct ovirt *ov;
 	const char *username, *pass;
-	int retv, verbose = 0, numvms, version, num;
+	int retv, verbose = 0, numvms, version;
 	int i, selvm, op_kill = 0;
 	struct ovirt_vm *curvm;
 	struct ovirt_pool *curpool;
@@ -203,7 +203,7 @@ int main(int argc, char *argv[])
 		goto exit_10;
 	}
 	while (global_stop == 0) {
-		numpools = ovirt_list_vmpool(ov, &vmpool);
+		numpools = ovirt_list_vmpools(ov, &vmpool);
 		numvms = ovirt_list_vms(ov, &vmhead, &vmpool);
 		if (numvms < 0 || numpools < 0) {
 			fprintf(stderr, "Cannot get resources for %s.\n",
@@ -262,7 +262,7 @@ int main(int argc, char *argv[])
 	if (op_kill)
 		nanosleep(&tm, NULL);
 	while (view_head.next != &view_head) {
-		num = post_view(&view_head);
+		post_view(&view_head);
 		nanosleep(&tm, NULL);
 	}
 	list_for_each(cur, &vmpool) {

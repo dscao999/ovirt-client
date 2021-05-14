@@ -10,6 +10,7 @@ extern "C" {
 enum OVIRT_AUTH {AUTH_NONE, AUTH_BASIC, AUTH_OAUTH, AUTH_SESSION};
 struct ovirt {
 	CURL *curl;
+	volatile int lock;
 	unsigned short version, auth;
 	unsigned short uplen, uppos;
 	unsigned int buflen;
@@ -80,12 +81,12 @@ static inline void ovirt_set_verbose(struct ovirt *ov, int verbose)
 
 int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain);
-void ovirt_logout(struct ovirt *ov);
+int ovirt_logout(struct ovirt *ov);
 
 int ovirt_init_version(struct ovirt *ov);
 int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,
 		struct list_head *vmpool);
-int ovirt_list_pools(struct ovirt *ov, struct list_head *vmpool);
+int ovirt_list_vmpools(struct ovirt *ov, struct list_head *vmpool);
 int ovirt_pool_allocatvm(struct ovirt *ov, struct ovirt_pool *pool);
 int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm,
 		const char *action);

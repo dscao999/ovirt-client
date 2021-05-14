@@ -1,5 +1,6 @@
 #ifndef LIST_HEAD_DSCAO__
 #define LIST_HEAD_DSCAO__
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -73,6 +74,33 @@ static inline struct list_head *list_index(struct list_head *head, int i)
 	if (cur == head)
 		cur = NULL;
 	return cur;
+}
+
+static inline void lock_unlock(volatile int *lock)
+{
+	*lock = 0;
+}
+
+static inline int lock_lock(volatile int *lock, unsigned int tries)
+{
+	int i, locked;
+	struct timespec intv;
+
+	locked = 0;
+	intv.tv_sec = 1;
+	intv.tv_nsec = 0;
+	for (i = 0; i < tries + 1; i++) {
+		while (i < tries && *lock != 0) {
+			nanosleep(&intv, NULL);
+			i++;
+		}
+		if (*lock == 0) {
+			locked = __sync_bool_compare_and_swap(lock, 0, 1);
+			if (locked)
+				break;
+		}
+	}
+	return locked;
 }
 
 #ifdef __cplusplus

@@ -14,15 +14,32 @@
 static const unsigned short err_base = 0x1000;
 static const unsigned short err_file = 0x10;
 static const unsigned short err_download = 0x11;
+static const unsigned short err_busy = 0x12;
 static const unsigned short err_unauth = 0x100;
-static const unsigned short err_other = 0x199;
 static const unsigned short err_overflow = 0x105;
 static const unsigned short err_auth_invalid = 0x106;
 static const unsigned short err_no_auth = 0x107;
 static const unsigned short err_no_jsonid = 0x108;
+static const unsigned short err_other = 0x199;
 
 #define OVIRT_SIZE (4*1024*1024)
 #define OVIRT_HEADER_SIZE	(1024*1024)
+
+/*static inline int ovirt_lock(struct ovirt *ov, unsigned int tries)
+{
+	int retv = 0;
+
+	if (lock_lock(&ov->lock, tries) == 0) {
+		fprintf(stderr, "Cannot obtain the lock.\n");
+		retv = -(err_base + err_busy);
+	}
+	return retv;
+}
+
+static inline void ovirt_unlock(struct ovirt *ov)
+{
+	lock_unlock(&ov->lock);
+}*/
 
 static size_t upload(char *buf, size_t siz, size_t nitems, void *usrdat)
 {
@@ -261,6 +278,7 @@ struct ovirt * ovirt_init(const char *ohost)
 
 	ov->auth = AUTH_NONE;
 	ov->version = 0;
+	ov->lock = 0;
 
 	return ov;
 }
@@ -348,7 +366,6 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 	}
 	if (!domain)
 		domain = defdm;
-
 	if (strlen(user) + 1 > sizeof(ov->username) ||
 			strlen(pass) + 1 > sizeof(ov->pass) ||
 			strlen(domain) + 1 > sizeof(ov->domain)) {
@@ -366,22 +383,24 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 			passed = 1;
 		else if (ov->version != 0) {
 			fprintf(stderr, "oVirt Logon failed.\n");
-			return retv;
+			goto exit_5;
 		}
 	}
 	if (passed == 0)
 		retv = ovirt_basic_logon(ov, user, pass, domain);
 	if (retv != CURLE_OK) {
 		fprintf(stderr, "oVirt Logon failed.\n");
-		return retv;
+		goto exit_5;
 	}
 	retv = ovirt_session_logon(ov, 1);
+
+exit_5:
 	return retv;
 }
 
-void ovirt_logout(struct ovirt *ov)
+int ovirt_logout(struct ovirt *ov)
 {
-	int retv;
+	int retv = 0;
 
 	if (ov->version >= 4)
 		retv = ovirt_oauth_logon(ov, ov->username, ov->pass,
@@ -391,16 +410,19 @@ void ovirt_logout(struct ovirt *ov)
 				ov->domain);
 	if (retv < 0) {
 		fprintf(stderr, "user credentials become invalid.\n");
-		return;
+		goto exit_5;
 	}
-	if (ovirt_session_logon(ov, 0) < 0)
+	if ((retv = ovirt_session_logon(ov, 0)) < 0)
 		fprintf(stderr, "Internal Error: " \
 				"Cannot invalidate session cookie.\n");
+
+exit_5:
+	return retv;
 }
 	
 int ovirt_is_engine(struct ovirt *ov)
 {
-	int retv;
+	int retv = 0;
 
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, ovirt_api);
@@ -414,8 +436,6 @@ int ovirt_is_engine(struct ovirt *ov)
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (-retv == err_base + err_unauth)
 		retv = 1;
-	else
-		retv = 0;
 	return retv;
 }
 
@@ -443,7 +463,7 @@ int ovirt_init_version(struct ovirt *ov)
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "Cannot fetch the oVirt version.\n");
-		return retv;
+		goto exit_5;
 	}
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
 	if (oxml) {
@@ -455,6 +475,8 @@ int ovirt_init_version(struct ovirt *ov)
 			retv = ov->version;
 		}
 	}
+
+exit_5:
 	return retv;
 }
 
@@ -549,7 +571,8 @@ int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,
 		struct list_head *vmpool)
 {
 	struct curl_slist *header = NULL;
-	int retv, numvms;
+	int retv, numvms = 0;
+
 
 	header = curl_slist_append(header, ov->token);
 	header = curl_slist_append(header, hd_accept_xml);
@@ -569,9 +592,11 @@ int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "Cannot list VMs.\n");
-		return retv;
+		goto exit_5;
 	}
 	numvms = xml_getvms(ov->dndat, ov->dnlen, vmhead, vmpool);
+
+exit_5:
 	return numvms;
 }
 
@@ -640,8 +665,10 @@ int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 	struct curl_slist *header = NULL;
 	int retv;
 
-	if (strcmp(action, "status") == 0)
-		return ovirt_vm_getstate(ov, vm);
+	if (strcmp(action, "status") == 0) {
+		retv = ovirt_vm_getstate(ov, vm);
+		goto exit_5;
+	}
 
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, vm->href);
@@ -665,6 +692,8 @@ int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
 	retv = http_check_status(ov->hdbuf, ov->dndat);
+
+exit_5:
 	return retv;
 }
 
@@ -703,7 +732,7 @@ exit_10:
 	return conlen;
 }
 
-int ovirt_download(struct ovirt *ov, const char *link)
+static int ovirt_download(struct ovirt *ov, const char *link)
 {
 	struct curl_slist *header = NULL;
 	int retv, len;
@@ -734,7 +763,8 @@ int ovirt_download(struct ovirt *ov, const char *link)
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
 	if (!oxml) {
 		fprintf(stderr, "Download corrrupt.\n%s\n", ov->dndat);
-		return -(err_base + err_download);
+		retv = -(err_base + err_download);
+		return retv;
 	}
 	len = xml_get_value(oxml, "/action/remote_viewer_connection_file",
 			ov->dndat, ov->max_dnlen);
@@ -814,7 +844,7 @@ static int xml_get_nics(const char *xmlstr, int len, struct list_head *nichead)
 int ovirt_get_vmnics(struct ovirt *ov, struct ovirt_vm *vm)
 {
 	struct curl_slist *header = NULL;
-	int numnics, retv;
+	int numnics = 0, retv;
 
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, vm->href);
@@ -835,8 +865,10 @@ int ovirt_get_vmnics(struct ovirt *ov, struct ovirt_vm *vm)
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv < 0)
-		return 0;
+		goto exit_5;
 	numnics = xml_get_nics(ov->dndat, ov->dnlen, &vm->nics);
+
+exit_5:
 	return numnics;
 }
 
@@ -851,8 +883,10 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 	if (!fout) {
 		fprintf(stderr, "Cannot open file %s: %s\n", vv,
 				strerror(errno));
-		return -(err_base + err_file);
+		retv = -(err_base + err_file);
+		goto exit_5;
 	}
+
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, vm->href);
 	strcat(ov->uri, "/graphicsconsoles");
@@ -890,8 +924,9 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 
 exit_10:
 	fclose(fout);
-	if (retv < 0)
+	if (retv <= 0)
 		remove(vv);
+exit_5:
 	return retv;
 }
 
@@ -1019,7 +1054,7 @@ static void ovirt_fill_vmdisk(struct ovirt *ov, struct ovirt_vmdisk *vmdsk)
 int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm)
 {
 	struct curl_slist *header = NULL;
-	int numdisks, retv;
+	int numdisks = 0, retv;
 	struct list_head *curdsk;
 	struct ovirt_vmdisk *vmdsk;
 
@@ -1042,12 +1077,14 @@ int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm)
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv < 0)
-		return 0;
+		goto exit_5;
 	numdisks = xml_get_disks(ov->dndat, ov->dnlen, &vm->disks);
 	list_for_each(curdsk, &vm->disks) {
 		vmdsk = list_entry(curdsk, struct ovirt_vmdisk, dsk_link);
 		ovirt_fill_vmdisk(ov, vmdsk);
 	}
+
+exit_5:
 	return numdisks;
 }
 
@@ -1179,10 +1216,10 @@ static int xml_get_vmpools(const char *xmlstr, int len,
 }
 
 static const char pools_path[] = "/ovirt-engine/api/vmpools";
-int ovirt_list_vmpool(struct ovirt *ov, struct list_head *vmpool)
+int ovirt_list_vmpools(struct ovirt *ov, struct list_head *vmpool)
 {
 	struct curl_slist *header = NULL;
-	int numpools, retv;
+	int numpools = 0, retv;
 
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, pools_path);
@@ -1201,19 +1238,19 @@ int ovirt_list_vmpool(struct ovirt *ov, struct list_head *vmpool)
 	ov->dndat[ov->dnlen] = 0;
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
-	if (retv < 0)
-		return 0;
-	numpools = xml_get_vmpools(ov->dndat, ov->dnlen, vmpool);
+	if (retv == 0)
+		numpools = xml_get_vmpools(ov->dndat, ov->dnlen, vmpool);
+
 	return numpools;
 }
 
 int ovirt_pool_allocatvm(struct ovirt *ov, struct ovirt_pool *pool)
 {
 	struct curl_slist *header = NULL;
-	int retv = 0, numvm = 1;
+	int retv, numvm = 0;
 
 	if (pool->vmsnow == pool->vmsmax)
-		return 0;
+		return numvm;
 
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, pool->alloc);
@@ -1235,7 +1272,7 @@ int ovirt_pool_allocatvm(struct ovirt *ov, struct ovirt_pool *pool)
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
 	retv = http_check_status(ov->hdbuf, ov->dndat);
-	if (retv < 0)
-		numvm = 0;
+	if (retv == 0)
+		numvm = 1;
 	return numvm;
 }
