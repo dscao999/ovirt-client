@@ -1,5 +1,5 @@
-#ifndef OVIRT_CLIENT_DSCAO__
-#define OVIRT_CLIENT_DSCAO__
+#ifndef OVIRT_CLIENT_INTERNAL_DSCAO__
+#define OVIRT_CLIENT_INTERNAL_DSCAO__
 #include <curl/curl.h>
 #include "list_head.h"
 
@@ -22,6 +22,8 @@ struct ovirt {
 	char engine[64];
 	char token[256];
 	char uri[256];
+	struct list_head vmhead, vmpool;
+	unsigned short numvms, numpools;
 	char errmsg[CURL_ERROR_SIZE];
 	char updat[4096];
 	char *hdbuf;
@@ -55,7 +57,7 @@ struct ovirt_pool {
 	char name[32];
 	struct list_head pool_link;
 	int vmsnow, vmsmax;
-	int hit, dangle;
+	unsigned char hit, removed;
 };
 
 struct ovirt_vm {
@@ -64,11 +66,20 @@ struct ovirt_vm {
 	char state[32];
 	char name[32];
 	struct list_head vm_link;
-	int con, hit;
 	struct list_head nics;
 	struct list_head disks;
 	struct ovirt_pool *pool;
+	unsigned char con, hit, removed;
 };
+
+static inline void ovirt_vm_setcon(struct ovirt_vm *vm, int con)
+{
+	vm->con = con;
+}
+static inline int ovirt_vm_iscon(struct ovirt_vm *vm, int con)
+{
+	return vm->con;
+}
 
 struct ovirt *ovirt_init(const char *host);
 void ovirt_exit(struct ovirt *ov);
@@ -93,13 +104,16 @@ int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm,
 int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm);
 int ovirt_get_vmnics(struct ovirt *ov, struct ovirt_vm *vm);
 int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv);
-
+const char * ovirt_vm_status_internal(int sta);
 void ovirt_vmlist_free(struct list_head *vmhead);
 
 int ovirt_list_vmpool(struct ovirt *ov, struct list_head *vmpool);
 void ovirt_vmpool_free(struct list_head *vmpool);
 
+int ovirt_lock(struct ovirt *ov, unsigned int tries);
+void ovirt_unlock(struct ovirt *ov);
+
 #ifdef __cplusplus
 }
 #endif
-#endif /* OVIRT_CLIENT_DSCAO__ */
+#endif /* OVIRT_CLIENT_INTERNAL_DSCAO__ */

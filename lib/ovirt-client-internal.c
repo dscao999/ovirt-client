@@ -9,7 +9,7 @@
 #include <errno.h>
 #include "base64.h"
 #include "ovirt-xml.h"
-#include "ovirt-client.h"
+#include "ovirt-client-internal.h"
 
 static const unsigned short err_base = 0x1000;
 static const unsigned short err_file = 0x10;
@@ -22,12 +22,18 @@ static const unsigned short err_no_auth = 0x107;
 static const unsigned short err_no_jsonid = 0x108;
 static const unsigned short err_other = 0x199;
 
+static const char *vm_states[] = {
+	"wait_for_launch", "down", "suspended", "powering_down",
+	"reboot_in_progress", "saving_state", "powering_up",
+	"restoring_state", "up", "unknown"
+};
+
 #define OVIRT_SIZE (4*1024*1024)
 #define OVIRT_HEADER_SIZE	(1024*1024)
 
-/*static inline int ovirt_lock(struct ovirt *ov, unsigned int tries)
+int ovirt_lock(struct ovirt *ov, unsigned int tries)
 {
-	int retv = 0;
+	int retv = 1;
 
 	if (lock_lock(&ov->lock, tries) == 0) {
 		fprintf(stderr, "Cannot obtain the lock.\n");
@@ -36,10 +42,10 @@ static const unsigned short err_other = 0x199;
 	return retv;
 }
 
-static inline void ovirt_unlock(struct ovirt *ov)
+void ovirt_unlock(struct ovirt *ov)
 {
 	lock_unlock(&ov->lock);
-}*/
+}
 
 static size_t upload(char *buf, size_t siz, size_t nitems, void *usrdat)
 {
@@ -274,17 +280,23 @@ struct ovirt * ovirt_init(const char *ohost)
 	curl_easy_setopt(ov->curl, CURLOPT_HEADERFUNCTION, hdrecv);
 	curl_easy_setopt(ov->curl, CURLOPT_HEADERDATA, ov);
 	curl_easy_setopt(ov->curl, CURLOPT_ERRORBUFFER, ov->errmsg);
-	curl_easy_setopt(ov->curl, CURLOPT_USERAGENT, "Lenovo oVirt Agent 1.0");
+	curl_easy_setopt(ov->curl, CURLOPT_USERAGENT, "Lenovo oVirt Client 1.0");
 
 	ov->auth = AUTH_NONE;
 	ov->version = 0;
 	ov->lock = 0;
+	INIT_LIST_HEAD(&ov->vmhead);
+	INIT_LIST_HEAD(&ov->vmpool);
+	ov->numvms = 0;
+	ov->numpools = 0;
 
 	return ov;
 }
 
 void ovirt_exit(struct ovirt *ov)
 {
+	ovirt_vmlist_free(&ov->vmhead);
+	ovirt_vmpool_free(&ov->vmpool);
 	curl_easy_cleanup(ov->curl);
 	curl_global_cleanup();
 	munmap(ov, ov->buflen);
@@ -500,6 +512,7 @@ static void add_vm_node(xmlNode *node, const char *vmid,
 	strcpy(curvm->id, vmid);
 	curvm->con = 0;
 	curvm->hit = 1;
+	curvm->removed = 0;
 	curvm->pool = NULL;
 	pool_node = xml_search_children(node, "vm_pool");
 	if (pool_node) {
@@ -544,6 +557,7 @@ static int xml_getvms(const char *xmlstr, int len, struct list_head *vmhead,
 			curvm = list_entry(cur, struct ovirt_vm, vm_link);
 			if (strcmp(curvm->id, id) == 0) {
 				curvm->hit = 1;
+				curvm->removed = 0;
 				break;
 			}
 		}
@@ -590,23 +604,16 @@ int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
-	if (retv != 0) {
-		fprintf(stderr, "Cannot list VMs.\n");
-		goto exit_5;
-	}
-	numvms = xml_getvms(ov->dndat, ov->dnlen, vmhead, vmpool);
+	if (retv != 0)
+		fprintf(stderr, "Cannot list VMs. Error code: %x\n", -retv);
+	else
+		numvms = xml_getvms(ov->dndat, ov->dnlen, vmhead, vmpool);
 
-exit_5:
 	return numvms;
 }
 
 static int match_vm_status(const char *st)
 {
-	static const char *vm_states[] = {
-		"wait_for_launch", "down", "suspended", "powering_down",
-		"reboot_in_progress", "saving_state", "powering_up",
-		"restoring_state", "up", NULL
-	};
 	int idx;
 
 	idx = 0;
@@ -1136,8 +1143,8 @@ void ovirt_vmpool_free(struct list_head *vmpool)
 	list_for_each_safe(cur, tmp, vmpool) {
 		curpool = list_entry(cur, struct ovirt_pool, pool_link);
 		if (curpool->vmsnow != 0) {
-			fprintf(stderr, "VM node still attached to pool: " \
-					"%s, pool node kept.", curpool->id);
+			fprintf(stderr, "pool kept: %s\n", curpool->id);
+			curpool->removed = 1;
 			continue;
 		}
 		list_del(cur, vmpool);
@@ -1169,6 +1176,7 @@ static int xml_get_vmpools(const char *xmlstr, int len,
 			curpool = list_entry(cur, struct ovirt_pool, pool_link);
 			if (strcmp(curpool->id, id) == 0) {
 				curpool->hit = 1;
+				curpool->removed = 0;
 				break;
 			}
 		}
@@ -1186,13 +1194,14 @@ static int xml_get_vmpools(const char *xmlstr, int len,
 			xml_get_node_value(subnode, vmsmax, sizeof(vmsmax));
 			curpool->vmsmax = atoi(vmsmax);
 			curpool->vmsnow = 0;
-			curpool->dangle = 0;
+			curpool->removed = 0;
 			curpool->hit = 1;
 			INIT_LIST_HEAD(&curpool->pool_link);
 			subnode = xml_search_children(node, "actions");
 			lnknode = xml_search_children(subnode, "link");
 			curpool->alloc[0] = 0;
-			len = xml_get_node_attr(lnknode, "href", curpool->alloc, sizeof(curpool->alloc));
+			len = xml_get_node_attr(lnknode, "href",
+					curpool->alloc, sizeof(curpool->alloc));
 			list_add(&curpool->pool_link, vmpool);
 		}
 		node = xml_next_node(node);
@@ -1203,8 +1212,7 @@ static int xml_get_vmpools(const char *xmlstr, int len,
 		curpool = list_entry(cur, struct ovirt_pool, pool_link);
 		if (curpool->hit == 0) {
 			if (curpool->vmsnow > 0) {
-				curpool->dangle = 1;
-				fprintf(stderr, "VM Pool deleted, but vm remains.\n");
+				curpool->removed = 1;
 			} else {
 				list_del(cur, vmpool);
 				free(curpool);
@@ -1275,4 +1283,11 @@ int ovirt_pool_allocatvm(struct ovirt *ov, struct ovirt_pool *pool)
 	if (retv == 0)
 		numvm = 1;
 	return numvm;
+}
+
+const char * ovirt_vm_status_internal(int sta)
+{
+	if (sta < 0 || sta >= sizeof(vm_states) / sizeof(char *))
+		sta = sizeof(vm_states) / sizeof(char *) - 1;
+	return vm_states[sta];
 }

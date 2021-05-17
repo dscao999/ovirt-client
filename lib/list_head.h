@@ -60,7 +60,7 @@ static inline void list_del(struct list_head *node, struct list_head *head)
 	next->prev = prev;
 }
 
-static inline struct list_head *list_index(struct list_head *head, int i)
+/*static inline struct list_head *list_index(struct list_head *head, int i)
 {
 	int seq;
 	struct list_head *cur;
@@ -74,7 +74,7 @@ static inline struct list_head *list_index(struct list_head *head, int i)
 	if (cur == head)
 		cur = NULL;
 	return cur;
-}
+}*/
 
 static inline void lock_unlock(volatile int *lock)
 {
