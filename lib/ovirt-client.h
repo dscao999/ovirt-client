@@ -10,7 +10,7 @@ struct ovirt;
 int ovirt_valid(const char *host);
 struct ovirt *ovirt_connect(const char *host, const char *user,
 		const char *passwd, const char *domain);
-void ovirt_disconnect(struct ovirt *ov);
+void ovirt_disconnect(struct ovirt *ov, int err);
 int ovirt_major_version(struct ovirt *ov);
 
 int ovirt_refresh_resources(struct ovirt *ov);

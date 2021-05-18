@@ -8,20 +8,18 @@
 #include <assert.h>
 #include <errno.h>
 #include "base64.h"
+#include "http_codes.h"
 #include "ovirt-xml.h"
 #include "ovirt-client-internal.h"
 
 static const unsigned short err_base = 0x1000;
-static const unsigned short err_file = 0x10;
-static const unsigned short err_download = 0x11;
-static const unsigned short err_busy = 0x12;
-static const unsigned short err_unauth = 0x100;
-static const unsigned short err_overflow = 0x105;
-static const unsigned short err_auth_invalid = 0x106;
-static const unsigned short err_no_auth = 0x107;
-static const unsigned short err_no_jsonid = 0x108;
-static const unsigned short err_no_content = 0x109;
-static const unsigned short err_other = 0x199;
+static const unsigned short err_file = 0x01;
+static const unsigned short err_download = 0x02;
+static const unsigned short err_busy = 0x03;
+static const unsigned short err_overflow = 0x04;
+static const unsigned short err_auth_invalid = 0x5;
+static const unsigned short err_no_auth = 0x6;
+static const unsigned short err_no_jsonid = 0x7;
 
 static const char *vm_states[] = {
 	"wait_for_launch", "down", "suspended", "powering_down",
@@ -31,6 +29,12 @@ static const char *vm_states[] = {
 
 #define OVIRT_SIZE (4*1024*1024)
 #define OVIRT_HEADER_SIZE	(1024*1024)
+
+#define perform_check(retv, ov) \
+	if (retv != CURLE_OK) { \
+		fprintf(stderr, "http failed: %d, %s\n", retv, ov->errmsg); \
+		return -retv; \
+	}
 
 int ovirt_lock(struct ovirt *ov, unsigned int tries)
 {
@@ -150,21 +154,17 @@ exit_10:
 
 static int http_check_status(const char *response, const char *msgbody)
 {
-	static const char HTTP_OK[] = "HTTP/1.1 200 OK";
-	static const char HTTP_UNAUTH[] = "HTTP/1.1 401 Unauthorized";
-	static const char HTTP_NO_CONTENT[] = "HTTP/1.1 204 No Content";
-	int retv = 0;
+	int retv = 0, code;
+	char header[16], *b_code;
 
-	if (strstr(response, HTTP_OK) == response)
+	strncpy(header, response, sizeof(header));
+	header[15] = 0;
+	b_code = strtok(header + 9, " ");
+	code = atoi(b_code);
+	
+	if (code == http_ok)
 		return retv;
-	if (strstr(response, HTTP_UNAUTH) == response) {
-		fprintf(stderr, "Unauthorized access.\n");
-		retv = -(err_base + err_unauth);
-	} else if (strstr(response, HTTP_NO_CONTENT)) {
-		fprintf(stderr, "No Content.\n");
-		retv = -(err_base + err_no_content);
-	} else
-		retv = -(err_base + err_other);
+	retv = -(err_base + code);
 	fprintf(stderr, "%s\n%s\n", response, msgbody);
 	return retv;
 }
@@ -193,6 +193,7 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
 	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	curl_slist_free_all(header);
@@ -238,6 +239,7 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
 	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0); 
@@ -349,7 +351,8 @@ static int ovirt_session_logon(struct ovirt *ov, int start)
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 0);
@@ -396,22 +399,22 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 	ov->auth = 0;
 	if (ov->version >= 4 || ov->version == 0) {
 		retv = ovirt_oauth_logon(ov, user, pass, domain);
-		if (retv == CURLE_OK)
+		if (retv < 0)
+			return retv;
+		else if (retv == CURLE_OK)
 			passed = 1;
 		else if (ov->version != 0) {
 			fprintf(stderr, "oVirt Logon failed.\n");
-			goto exit_5;
+			return retv;
 		}
 	}
 	if (passed == 0)
 		retv = ovirt_basic_logon(ov, user, pass, domain);
 	if (retv != CURLE_OK) {
 		fprintf(stderr, "oVirt Logon failed.\n");
-		goto exit_5;
+		return retv;
 	}
 	retv = ovirt_session_logon(ov, 1);
-
-exit_5:
 	return retv;
 }
 
@@ -447,11 +450,12 @@ int ovirt_is_engine(struct ovirt *ov)
 	ov->dnlen = 0;
 	ov->hdlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
 	retv = http_check_status(ov->hdbuf, ov->dndat);
-	if (-retv == err_base + err_unauth)
+	if (-retv == err_base + http_unauth)
 		retv = 1;
 	return retv;
 }
@@ -472,7 +476,8 @@ int ovirt_init_version(struct ovirt *ov)
 	ov->dnlen = 0;
 	ov->hdlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
@@ -480,7 +485,7 @@ int ovirt_init_version(struct ovirt *ov)
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
 		fprintf(stderr, "Cannot fetch the oVirt version.\n");
-		goto exit_5;
+		return retv;
 	}
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
 	if (oxml) {
@@ -493,7 +498,6 @@ int ovirt_init_version(struct ovirt *ov)
 		}
 	}
 
-exit_5:
 	return retv;
 }
 
@@ -602,7 +606,8 @@ int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	ov->dndat[ov->dnlen] = 0;
 	ov->hdbuf[ov->hdlen] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
@@ -649,7 +654,8 @@ static int ovirt_vm_getstate(struct ovirt *ov, struct ovirt_vm *vm)
 	ov->errmsg[0] = 0;
 	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	curl_slist_free_all(header);
 	ov->hdbuf[ov->hdlen] = 0;
@@ -678,7 +684,7 @@ int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 
 	if (strcmp(action, "status") == 0) {
 		retv = ovirt_vm_getstate(ov, vm);
-		goto exit_5;
+		return retv;
 	}
 
 	strcpy(ov->uri, ov->engine);
@@ -696,7 +702,8 @@ int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, action_empty);
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, action_empty_len);
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	curl_slist_free_all(header);
@@ -704,7 +711,6 @@ int ovirt_vm_action(struct ovirt *ov, struct ovirt_vm *vm, const char *action)
 	ov->dndat[ov->dnlen] = 0;
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 
-exit_5:
 	return retv;
 }
 
@@ -762,7 +768,8 @@ static int ovirt_download(struct ovirt *ov, const char *link)
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
 	ov->hdbuf[ov->hdlen] = 0;
@@ -869,17 +876,16 @@ int ovirt_get_vmnics(struct ovirt *ov, struct ovirt_vm *vm)
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv < 0)
-		goto exit_5;
+		return retv;
 	numnics = xml_get_nics(ov->dndat, ov->dnlen, &vm->nics);
-
-exit_5:
 	return numnics;
 }
 
@@ -910,7 +916,8 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
@@ -1035,7 +1042,7 @@ exit_10:
 	ovirt_xml_exit(oxml);
 }
 
-static void ovirt_fill_vmdisk(struct ovirt *ov, struct ovirt_vmdisk *vmdsk)
+static int ovirt_fill_vmdisk(struct ovirt *ov, struct ovirt_vmdisk *vmdsk)
 {
 	struct curl_slist *header = NULL;
 	int retv;
@@ -1050,16 +1057,17 @@ static void ovirt_fill_vmdisk(struct ovirt *ov, struct ovirt_vmdisk *vmdsk)
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv < 0)
-		return;
+		return retv;
 	xml_fill_vmdisk(ov->dndat, ov->dnlen, vmdsk);
-	return;
+	return retv;
 }
 
 int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm)
@@ -1081,7 +1089,8 @@ int ovirt_get_vmdisks(struct ovirt *ov, struct ovirt_vm *vm)
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
@@ -1244,7 +1253,8 @@ int ovirt_list_vmpools(struct ovirt *ov, struct list_head *vmpool)
 	ov->hdlen = 0;
 	ov->dnlen = 0;
 	ov->errmsg[0] = 0;
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl,CURLOPT_HTTPHEADER, NULL);
 	ov->hdbuf[ov->hdlen] = 0;
 	ov->dndat[ov->dnlen] = 0;
@@ -1277,7 +1287,8 @@ int ovirt_pool_allocatvm(struct ovirt *ov, struct ovirt_pool *pool)
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, action_empty);
 	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, action_empty_len);
-	curl_easy_perform(ov->curl);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
 	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	curl_slist_free_all(header);

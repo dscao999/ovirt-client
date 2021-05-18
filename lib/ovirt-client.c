@@ -64,9 +64,15 @@ int ovirt_refresh_resources(struct ovirt *ov)
 	if (retv != 1)
 		return retv;
 	ov->numpools = ovirt_list_vmpools(ov, &ov->vmpool);
-	ov->numvms = ovirt_list_vms(ov, &ov->vmhead, &ov->vmpool);
+	if (ov->numpools >= 0)
+		ov->numvms = ovirt_list_vms(ov, &ov->vmhead, &ov->vmpool);
 	ovirt_unlock(ov);
-	return ov->numpools + ov->numvms;
+	if (ov->numpools < 0)
+	       return ov->numpools;
+	else if (ov->numvms < 0)
+		return ov->numvms;
+	else
+		return ov->numpools + ov->numvms;
 }
 
 int ovirt_vmpool_getnum(const struct ovirt *ov)
@@ -106,12 +112,13 @@ err_exit_10:
 	return NULL;
 }
 
-void ovirt_disconnect(struct ovirt *ov)
+void ovirt_disconnect(struct ovirt *ov, int err)
 {
 	while (ovirt_lock(ov, 30) != 1)
 		fprintf(stderr, "Cannot obtain ov lock.\n");
 
-	ovirt_logout(ov);
+	if (!err)
+		ovirt_logout(ov);
 	ovirt_exit(ov);
 }
 
