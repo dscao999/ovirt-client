@@ -58,21 +58,26 @@ int ovirt_valid(const char *host)
 
 int ovirt_refresh_resources(struct ovirt *ov)
 {
-	int retv;
+	int retv, sum;
 
 	retv = ovirt_lock(ov, 30);
 	if (retv != 1)
 		return retv;
-	ov->numpools = ovirt_list_vmpools(ov, &ov->vmpool);
-	if (ov->numpools >= 0)
-		ov->numvms = ovirt_list_vms(ov, &ov->vmhead, &ov->vmpool);
+	ov->numpools = 0;
+	ov->numvms = 0;
+	retv = ovirt_list_vmpools(ov, &ov->vmpool);
+	if ( retv >= 0) {
+		ov->numpools = retv;
+		retv = ovirt_list_vms(ov, &ov->vmhead, &ov->vmpool);
+	}
 	ovirt_unlock(ov);
-	if (ov->numpools < 0)
-	       return ov->numpools;
-	else if (ov->numvms < 0)
-		return ov->numvms;
-	else
-		return ov->numpools + ov->numvms;
+	if (retv >= 0) {
+	       ov->numvms = retv;
+	       sum = ov->numpools + ov->numvms;
+	} else
+		sum = retv;
+
+	return sum;
 }
 
 int ovirt_vmpool_getnum(const struct ovirt *ov)
