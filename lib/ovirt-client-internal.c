@@ -20,6 +20,7 @@ static const unsigned short err_overflow = 0x105;
 static const unsigned short err_auth_invalid = 0x106;
 static const unsigned short err_no_auth = 0x107;
 static const unsigned short err_no_jsonid = 0x108;
+static const unsigned short err_no_content = 0x109;
 static const unsigned short err_other = 0x199;
 
 static const char *vm_states[] = {
@@ -151,6 +152,7 @@ static int http_check_status(const char *response, const char *msgbody)
 {
 	static const char HTTP_OK[] = "HTTP/1.1 200 OK";
 	static const char HTTP_UNAUTH[] = "HTTP/1.1 401 Unauthorized";
+	static const char HTTP_NO_CONTENT[] = "HTTP/1.1 204 No Content";
 	int retv = 0;
 
 	if (strstr(response, HTTP_OK) == response)
@@ -158,6 +160,9 @@ static int http_check_status(const char *response, const char *msgbody)
 	if (strstr(response, HTTP_UNAUTH) == response) {
 		fprintf(stderr, "Unauthorized access.\n");
 		retv = -(err_base + err_unauth);
+	} else if (strstr(response, HTTP_NO_CONTENT)) {
+		fprintf(stderr, "No Content.\n");
+		retv = -(err_base + err_no_content);
 	} else
 		retv = -(err_base + err_other);
 	fprintf(stderr, "%s\n%s\n", response, msgbody);
@@ -510,7 +515,6 @@ static void add_vm_node(xmlNode *node, const char *vmid,
 	len = xml_get_node_attr(node, "href", curvm->href, sizeof(curvm->href));
 	assert((unsigned int)len < sizeof(curvm->href));
 	strcpy(curvm->id, vmid);
-	curvm->con = 0;
 	curvm->hit = 1;
 	curvm->removed = 0;
 	curvm->pool = NULL;

@@ -62,7 +62,7 @@ int ovirt_refresh_resources(struct ovirt *ov)
 
 	retv = ovirt_lock(ov, 30);
 	if (retv != 1)
-		return 0;
+		return retv;
 	ov->numpools = ovirt_list_vmpools(ov, &ov->vmpool);
 	ov->numvms = ovirt_list_vms(ov, &ov->vmhead, &ov->vmpool);
 	ovirt_unlock(ov);
@@ -77,6 +77,11 @@ int ovirt_vmpool_getnum(const struct ovirt *ov)
 int ovirt_vm_getnum(const struct ovirt *ov)
 {
 	return ov->numvms;
+}
+
+int ovirt_major_version(struct ovirt *ov)
+{
+	return ov->version;
 }
 
 struct ovirt * ovirt_connect(const char *host, const char *user,
@@ -94,8 +99,6 @@ struct ovirt * ovirt_connect(const char *host, const char *user,
 	retv = ovirt_init_version(ov);
 	if (retv < 0)
 		goto err_exit_10;
-	ov->numpools = ovirt_list_vmpools(ov, &ov->vmpool);
-	ov->numvms = ovirt_list_vms(ov, &ov->vmhead, &ov->vmpool);
 	return ov;
 
 err_exit_10:
@@ -116,7 +119,7 @@ int ovirt_vmpool_next(struct ovirt *ov, char *id, int buflen, void **ctx)
 {
 	struct list_head *cur;
 	struct ovirt_pool *nxt_pool, *pool = (struct ovirt_pool *)(*ctx);
-	int retv, len = -1;
+	int retv, len = 0;
 
 	retv = ovirt_lock(ov, 30);
 	if (retv != 1)
@@ -161,10 +164,8 @@ int ovirt_vm_next(struct ovirt *ov, char *id, int buflen, void **ctx)
 	else
 		cur = &vm->vm_link;
 	nxt_vm = NULL;
-	while (cur->next != &ov->vmpool) {
-		cur = cur->next;
-		nxt_vm = list_entry(cur, struct ovirt_vm, vm_link);
-	}
+	if (cur->next != &ov->vmhead)
+		nxt_vm = list_entry(cur->next, struct ovirt_vm, vm_link);
 	*ctx = nxt_vm;
 	if (nxt_vm) {
 		len = strlen(nxt_vm->id);
@@ -253,7 +254,7 @@ const char * ovirt_vm_status(int sta)
 
 int ovirt_vm_start(struct ovirt *ov, const char *vmid)
 {
-	int retv = 0, tries;
+	int retv = 0;
 	struct ovirt_vm *vm;
 
 	retv = ovirt_lock(ov, 30);
@@ -267,13 +268,10 @@ int ovirt_vm_start(struct ovirt *ov, const char *vmid)
 	}
 
 	retv = ovirt_vm_action(ov, vm, "status");
-	tries = 0;
-	while ((retv == 1 || retv == 2) && tries < 10) {
+	if (retv == 1 || retv == 2) {
 		retv = ovirt_vm_action(ov, vm, "start");
-		if (retv != 0)
-			break;
-		retv = ovirt_vm_action(ov, vm, "status");
-		tries += 1;
+		if (retv == 0)
+			retv = ovirt_vm_action(ov, vm, "status");
 	}
 
 exit_10:
@@ -283,7 +281,7 @@ exit_10:
 
 int ovirt_vm_getvv(struct ovirt *ov, const char *vmid, const char *vvname)
 {
-	int retv;
+	int retv = -1;
 	struct ovirt_vm *vm;
 
 	retv = ovirt_lock(ov, 30);
@@ -291,13 +289,9 @@ int ovirt_vm_getvv(struct ovirt *ov, const char *vmid, const char *vvname)
 		return retv;
 
 	vm = vm_id2struct(ov, vmid);
-	if (!vm) {
-		retv = -1;
-		goto exit_10;
-	}
-	retv = ovirt_get_vmconsole(ov, vm, vvname);
+	if (vm)
+		retv = ovirt_get_vmconsole(ov, vm, vvname);
 
-exit_10:
 	ovirt_unlock(ov);
 	return retv;
 }

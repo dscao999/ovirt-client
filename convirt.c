@@ -18,7 +18,8 @@
 
 struct remote_view {
 	struct list_head vw_link;
-	struct ovirt_vm *vm;
+	struct ovirt *ov;
+	char vmid[40];
 	pid_t rid;
 };
 
@@ -38,7 +39,6 @@ static int post_view(struct list_head *head)
 					strerror(errno));
 		else if (expid > 0) {
 			list_del(cur, head);
-			view->vm->con = 0;
 			free(view);
 			num++;
 		}
@@ -49,6 +49,8 @@ static int post_view(struct list_head *head)
 static volatile int global_stop = 0;
 static volatile int view_exited = 0;
 
+static const struct timespec itv = {.tv_sec = 1, .tv_nsec = 0};
+
 
 void sig_handler(int sig)
 {
@@ -58,58 +60,72 @@ void sig_handler(int sig)
 		global_stop = 1;
 }
 
-static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
-		struct list_head *head)
+static int connect_vm(struct ovirt *ov, const char *vmid, struct list_head *head)
 {
-	int retv = 0, num, sact;
+	int retv, start = 0;
+	struct list_head *cur;
 	struct remote_view *view;
 	char vvname[128];
 	pid_t cpid;
-	int count;
+	const char *vm_status;
 
-	sact = 0;
-	if (strcmp(curvm->state, "down") == 0 ||
-			strcmp(curvm->state, "suspended") == 0) {
-		printf("Starting the VM %s .", curvm->id);
-		retv = ovirt_vm_action(ov, curvm, "start");
-		sact = 1;
+	list_for_each(cur, head) {
+		view = list_entry(cur, struct remote_view , vw_link);
+		if (strcmp(view->vmid, vmid) == 0)
+			break;
 	}
-	if (retv != 0)
-		goto exit_10;
-	count = 0;
-	while (strcmp(curvm->state, "up") != 0 && global_stop == 0 &&
-			retv == 0) {
-		sleep(3);
-		retv = ovirt_vm_action(ov, curvm, "status");
-		printf(".");
-		fflush(stdout);
-		count += 1;
-		if (count % 10 == 0)
-			printf("%s", curvm->state);
-		if (count == 30) {
-			fprintf(stderr, "Abort starting the vm.\n");
-			retv = -100;
-		}
+	if (cur != head) {
+		fprintf(stderr, "VM %s already connected.\n", vmid);
+		return 0;
 	}
-	if (sact)
-		printf("\n");
-	if (retv < 0 || global_stop != 0)
-		goto exit_10;
-	sprintf(vvname, "vv-%s.txt", curvm->id);
-	num = ovirt_get_vmconsole(ov, curvm, vvname);
-	if (num <= 0)
-		goto exit_10;
 	view = malloc(sizeof(struct remote_view));
 	if (!view) {
-		fprintf(stderr, "Out of memory.\n");
+		fprintf(stderr, "Out of Memory!\n");
 		return -ENOMEM;
+	};
+	view->ov = ov;
+	strcpy(view->vmid, vmid);
+	INIT_LIST_HEAD(&view->vw_link);
+	view->rid = 0;
+
+	retv = ovirt_vm_status_query(ov, vmid);
+	if (retv < 0)
+		goto err_exit_10;
+	vm_status = ovirt_vm_status(retv);
+	if (strcmp(vm_status, "down") == 0 ||
+			strcmp(vm_status, "suspended") == 0) {
+		retv = ovirt_vm_start(ov, vmid);
+		if (retv < 0)
+			goto err_exit_10;
+		start = 1;
+	}
+	if (start) {
+		while (1) {
+			nanosleep(&itv, 0);
+			retv = ovirt_vm_status_query(ov, vmid);
+			if (retv == -1)
+				goto err_exit_10;
+			vm_status = ovirt_vm_status(retv);
+			if (strcmp(vm_status, "down") == 0 ||
+					strcmp(vm_status, "suspended") == 0)
+				goto err_exit_10;
+			if (strcmp(vm_status, "wait_for_launch") != 0)
+				break;
+		}
+	}
+
+	sprintf(vvname, "vv-%s.txt", vmid);
+	retv = ovirt_vm_getvv(ov, vmid, vvname);
+	if (retv < 0) {
+		if ((-retv & 0x0fff) == 0x109)
+			fprintf(stderr, "VM: %s, console occupied.\n", vmid);
+		goto err_exit_10;
 	}
 	cpid = fork();
 	if (cpid == -1) {
 		fprintf(stderr, "Cannot fork: %s\n", strerror(errno));
 		retv = -errno;
-		free(view);
-		goto exit_10;
+		goto err_exit_10;
 	} else if (cpid == 0) {
 		retv = execlp("remote-viewer", "remote-viewer", "--",
 				vvname, NULL);
@@ -119,29 +135,75 @@ static int connect_vm(struct ovirt *ov, struct ovirt_vm *curvm,
 	}
 	view->rid = cpid;
 	list_add(&view->vw_link, head);
-	curvm->con = 1;
-	view->vm = curvm;
-	retv = 1;
 
-exit_10:
-	if (retv != 1)
-		fprintf(stderr, "Cannot connect to VM: %s\n", curvm->state);
 	return retv;
+
+err_exit_10:
+	free(view);
+	printf("Cannot connect the VM: %s, error code: %X\n", vmid, -retv);
+	return retv;
+}
+
+struct uuid {
+	char id[40];
+};
+
+static struct uuid idrecs[20];
+
+static int refresh_idrecs(struct ovirt *ov, int *numpools, int *numvms)
+{
+	int retv, i;
+	void *ctx;
+	struct uuid *curid;
+
+	retv = ovirt_refresh_resources(ov);
+	if (retv < 0) {
+		fprintf(stderr, "oVirt resources refresh failed: %X\n", -retv);
+		return retv;
+	}
+	*numpools = ovirt_vmpool_getnum(ov);
+	*numvms = ovirt_vm_getnum(ov);
+	i = 0;
+	curid = idrecs;
+	ctx = NULL;
+	do {
+		retv = ovirt_vmpool_next(ov, curid->id, sizeof(curid->id),
+				&ctx);
+		if (retv == 0)
+			break;
+		i += 1;
+		curid++;
+	} while (i < 20);
+	assert(*numpools == i);
+
+	ctx = NULL;
+	do {
+		retv = ovirt_vm_next(ov, curid->id, sizeof(curid->id), &ctx);
+		if (retv == 0)
+			break;
+		i += 1;
+		curid++;
+	} while (i < 20);
+	assert(*numpools + *numvms == i);
+
+	return *numpools + *numvms;
 }
 
 int main(int argc, char *argv[])
 {
 	struct ovirt *ov;
 	const char *username, *pass;
-	int retv, verbose = 0, numvms, version;
-	int i, selvm, op_kill = 0;
-	struct ovirt_vm *curvm;
-	struct ovirt_pool *curpool;
+	int retv, numvms;
+	int i, selvm, op_kill = 0, sta;
 	struct sigaction act;
-	struct list_head view_head, vmhead, vmpool,*cur;
+	struct list_head view_head, *cur;
 	struct remote_view *cur_view;
 	struct timespec tm;
-	int numnic, numdsk, numpools;
+	int numpools;
+	char *host = "engine.lidc.com";
+	struct uuid *curid;
+	const char *vm_status;
+	int vmsmax, vmsnow;
 
 	retv = 0;
 	if (argc > 1)
@@ -153,11 +215,9 @@ int main(int argc, char *argv[])
 	else
 		pass = "abc123";
 	if (argc > 3)
-		verbose = atoi(argv[3]);
+		host = argv[3];
 
 	INIT_LIST_HEAD(&view_head);
-	INIT_LIST_HEAD(&vmhead);
-	INIT_LIST_HEAD(&vmpool);
 	memset(&act, 0, sizeof(act));
 	act.sa_handler = sig_handler;
 	if (sigaction(SIGCHLD, &act, NULL) == -1) {
@@ -176,53 +236,45 @@ int main(int argc, char *argv[])
 		return 5;
 	}
 
-	ov = ovirt_init("engine.lidc.com");
+	retv = ovirt_valid(host);
+	if (!retv) {
+		fprintf(stderr, "Host %s has no oVirt service running.\n", host);
+		return 6;
+	}
+
+	ov = ovirt_connect(host, username, pass, NULL);
 	if (!ov) {
-		fprintf(stderr, "CURL Initialization failed.\n");
-		fprintf(stderr, "Error:\n%s\n", ov->errmsg);
+		fprintf(stderr, "Connection Initialization failed.\n");
 		return 1;
 	}
-	if (ovirt_is_engine(ov) == 1)
-		printf("Yes! A valid oVirt engine service.\n");
-	else {
-		printf("No! Not a valid oVirt engine service.\n");
-		exit(5);
+	if ((retv = ovirt_major_version(ov)) < 4) {
+		fprintf(stderr, "Current oVirt service version: %d, Only " \
+				"version 4 or highter is supported.", retv);
+		ovirt_disconnect(ov);
+		return 2;
 	}
-	ovirt_set_verbose(ov, verbose);
-	retv = ovirt_logon(ov, username, pass, NULL);
-	if (retv < 0)
-		goto exit_10;
-	version = ovirt_init_version(ov);
-	if (version < 0) {
-		retv = 1;
-		fprintf(stderr, "Cannot Init version\n");
-		goto exit_10;
-	} else if (version < 3) {
-		retv = 2;
-		fprintf(stderr, "oVirt version too low. Major: %d\n", retv);
-		goto exit_10;
-	}
+
 	while (global_stop == 0) {
-		numpools = ovirt_list_vmpools(ov, &vmpool);
-		numvms = ovirt_list_vms(ov, &vmhead, &vmpool);
-		if (numvms < 0 || numpools < 0) {
+		refresh_idrecs(ov, &numpools, &numvms);
+		if (numvms <= 0 || numpools <= 0) {
 			fprintf(stderr, "Cannot get resources for %s.\n",
 					username);
-			exit(5);
+			global_stop =1;
+			continue;
 		}
-		i = 0;
-		list_for_each(cur, &vmpool) {
-			curpool = list_entry(cur, struct ovirt_pool, pool_link);
+
+		curid = idrecs;
+		for (i = 0; i < numpools; i++, curid++) {
+			vmsmax = ovirt_vmpool_maxvms(ov, curid->id);
+			vmsnow = ovirt_vmpool_curvms(ov, curid->id);
 			printf("[%2d] - %s, Max VM: %4d, Allocated: %1d\n", i,
-					curpool->id, curpool->vmsmax, curpool->vmsnow);
-			i++;
+					curid->id, vmsmax, vmsnow);
 		}
-		list_for_each(cur, &vmhead) {
-			curvm = list_entry(cur, struct ovirt_vm, vm_link);
-			ovirt_vm_action(ov, curvm, "status");
-			printf("[%2d] - %s,  state: %4s, connected: %d\n", i,
-					curvm->id, curvm->state, curvm->con);
-			i++;
+		for (; i < numpools + numvms; i++, curid++) {
+			sta = ovirt_vm_status_query(ov, curid->id);
+			vm_status = ovirt_vm_status(sta);
+			printf("[%2d] - %s,  state: %4s\n", i, curid->id,
+					vm_status);
 		}
 		printf("Please select the VM to connect[-1, exit]" \
 				"[>= %d, refresh]: ", i);
@@ -231,26 +283,19 @@ int main(int argc, char *argv[])
 		if (selvm <= -1)
 			break;
 		else if (selvm < numpools) {
-			cur = list_index(&vmpool, selvm);
-			curpool = list_entry(cur, struct ovirt_pool, pool_link);
-			if (ovirt_pool_allocatvm(ov, curpool) <= 0)
+			retv = ovirt_vmpool_grabvm(ov, idrecs[i].id);
+			if (retv <= 0)
 				fprintf(stderr, "Cannot allocate more VM.\n");
 		} else if (selvm >= numpools && selvm < numvms + numpools) {
-			cur = list_index(&vmhead, selvm - numpools);
-			curvm = list_entry(cur, struct ovirt_vm, vm_link);
-			if (curvm->con == 1)
-				fprintf(stderr, "Already connected.\n");
-			else {
-				retv = connect_vm(ov, curvm, &view_head);
-				if (strcmp(curvm->state, "up") != 0)
-					global_stop = 0;
-			}
+			retv = connect_vm(ov, idrecs[selvm].id, &view_head);
 		}
 		if (view_exited != 0) {
 			view_exited = 0;
 			post_view(&view_head);
 		}
+		retv = 0;
 	}
+
 	list_for_each(cur, &view_head) {
 		cur_view = list_entry(cur, struct remote_view, vw_link);
 		kill(cur_view->rid, SIGTERM);
@@ -265,28 +310,18 @@ int main(int argc, char *argv[])
 		post_view(&view_head);
 		nanosleep(&tm, NULL);
 	}
-	list_for_each(cur, &vmpool) {
-		curpool = list_entry(cur, struct ovirt_pool, pool_link);
-		printf("Pool: %s, Max: %d, Now: %d\n", curpool->id, curpool->vmsmax, curpool->vmsnow);
+	refresh_idrecs(ov, &numpools, &numvms);
+	curid = idrecs;
+	for (i = 0; i < numpools; i++, curid++) {
+		vmsmax = ovirt_vmpool_maxvms(ov, curid->id);
+		vmsnow = ovirt_vmpool_curvms(ov, curid->id);
+		printf("[%2d] - %s, Max VM: %4d, Allocated: %1d\n", i,
+				curid->id, vmsmax, vmsnow);
 	}
-	list_for_each(cur, &vmhead) {
-		curvm = list_entry(cur, struct ovirt_vm, vm_link);
-		numnic = ovirt_get_vmnics(ov, curvm);
-		numdsk = ovirt_get_vmdisks(ov, curvm);
-		printf("VM: %s, number nics: %d, number of disks: %d\n",
-				curvm->name, numnic, numdsk);
-	}
-	ovirt_vmlist_free(&vmhead);
-	list_for_each(cur, &vmpool) {
-		curpool = list_entry(cur, struct ovirt_pool, pool_link);
-		printf("Pool: %s, Max: %d, Now: %d\n", curpool->id, curpool->vmsmax, curpool->vmsnow);
-	}
-	ovirt_vmpool_free(&vmpool);
-	ovirt_logout(ov);
 
-exit_10:
-	ovirt_exit(ov);
+	ovirt_disconnect(ov);
 	if (retv < 0)
-		retv = (-retv) & 0x0fff;
+		retv = -retv;
+	retv = retv & 0x0fff;
 	return retv;
 }

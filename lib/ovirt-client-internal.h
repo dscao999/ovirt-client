@@ -69,17 +69,9 @@ struct ovirt_vm {
 	struct list_head nics;
 	struct list_head disks;
 	struct ovirt_pool *pool;
-	unsigned char con, hit, removed;
+	unsigned char hit, removed;
 };
 
-static inline void ovirt_vm_setcon(struct ovirt_vm *vm, int con)
-{
-	vm->con = con;
-}
-static inline int ovirt_vm_iscon(struct ovirt_vm *vm, int con)
-{
-	return vm->con;
-}
 
 struct ovirt *ovirt_init(const char *host);
 void ovirt_exit(struct ovirt *ov);

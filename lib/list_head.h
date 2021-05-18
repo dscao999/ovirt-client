@@ -84,14 +84,12 @@ static inline void lock_unlock(volatile int *lock)
 static inline int lock_lock(volatile int *lock, unsigned int tries)
 {
 	int i, locked;
-	struct timespec intv;
+	static const struct timespec itv = {.tv_sec = 1, .tv_nsec = 0};
 
 	locked = 0;
-	intv.tv_sec = 1;
-	intv.tv_nsec = 0;
 	for (i = 0; i < tries + 1; i++) {
 		while (i < tries && *lock != 0) {
-			nanosleep(&intv, NULL);
+			nanosleep(&itv, NULL);
 			i++;
 		}
 		if (*lock == 0) {
