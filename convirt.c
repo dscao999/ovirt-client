@@ -283,7 +283,7 @@ int main(int argc, char *argv[])
 		if (selvm <= -1)
 			break;
 		else if (selvm < numpools) {
-			retv = ovirt_vmpool_grabvm(ov, idrecs[i].id);
+			retv = ovirt_vmpool_grabvm(ov, idrecs[selvm].id);
 			if (retv <= 0)
 				fprintf(stderr, "Cannot allocate more VM.\n");
 		} else if (selvm >= numpools && selvm < numvms + numpools) {
