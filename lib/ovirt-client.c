@@ -291,6 +291,33 @@ exit_10:
 	return retv;
 }
 
+int ovirt_vm_stop(struct ovirt *ov, const char *vmid)
+{
+	int retv = 0;
+	struct ovirt_vm *vm;
+
+	retv = ovirt_lock(ov, 30);
+	if (retv != 1)
+		return retv;
+
+	vm = vm_id2struct(ov, vmid);
+	if (!vm) {
+		retv = -1;
+		goto exit_10;
+	}
+
+	retv = ovirt_vm_action(ov, vm, "status");
+	if (retv == 8) {
+		retv = ovirt_vm_action(ov, vm, "stop");
+		if (retv == 0)
+			retv = ovirt_vm_action(ov, vm, "status");
+	}
+
+exit_10:
+	ovirt_unlock(ov);
+	return retv;
+}
+
 int ovirt_vm_getvv(struct ovirt *ov, const char *vmid, const char *vvname)
 {
 	int retv = -1;

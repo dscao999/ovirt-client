@@ -29,6 +29,7 @@ int ovirt_vm_name(struct ovirt *ov, const char *vmid, char *name, int buflen);
 int ovirt_vm_status_query(struct ovirt *ov, const char *vmid);
 const char *ovirt_vm_status(int sta);
 int ovirt_vm_start(struct ovirt *ov, const char *vmid);
+int ovirt_vm_stop(struct ovirt *ov, const char *vmid);
 int ovirt_vm_getvv(struct ovirt *ov, const char *vmid, const char *vvname);
 
 #ifdef __cplusplus
