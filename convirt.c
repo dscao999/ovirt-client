@@ -29,16 +29,18 @@ static int post_view(struct list_head *head)
 	struct remote_view *view;
 	struct list_head *cur, *tmp;
 	pid_t expid;
-	int num;
+	int num, wstatus;
 
 	num = 0;
 	list_for_each_safe(cur, tmp, head) {
 		view = list_entry(cur, struct remote_view, vw_link);
-		expid = waitpid(view->rid, NULL, WNOHANG);
+		expid = waitpid(view->rid, &wstatus, WNOHANG);
 		if (expid == -1)
 			fprintf(stderr, "waitpid failed: %s\n",
 					strerror(errno));
 		else if (expid > 0) {
+			fprintf(stderr, "Info: vm %s disconnected, code: %x\n",
+					view->vmid, wstatus);
 			list_del(cur, head);
 			free(view);
 			num++;
