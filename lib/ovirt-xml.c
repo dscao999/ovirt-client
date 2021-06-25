@@ -2,10 +2,11 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include "miscs.h"
 #include "ovirt-xml.h"
 
 #define warn_overflow \
-	fprintf(stderr, "Warning: buffer overflow in %s:%s\n", \
+	elog("Warning: buffer overflow in %s:%s\n", \
 			__FILE__, __func__)
 
 static inline const char *node_value_pointer(xmlNode *nod)
@@ -53,12 +54,12 @@ struct ovirt_xml * ovirt_xml_init(const char *xmlbuf, int len)
 
 	oxml = (struct ovirt_xml *)malloc(sizeof(struct ovirt_xml));
 	if (!oxml) {
-		fprintf(stderr, "Out of Memory!\n");
+		elog("Out of Memory!\n");
 		return NULL;
 	}
 	oxml->ctxt = xmlNewParserCtxt();
 	if (!oxml->ctxt) {
-		fprintf(stderr, "Failed to allocate parser context. " \
+		elog("Failed to allocate parser context. " \
 				"Maybe out of memory.\n");
 		free(oxml);
 		return NULL;
@@ -66,12 +67,11 @@ struct ovirt_xml * ovirt_xml_init(const char *xmlbuf, int len)
 	oxml->doc = xmlCtxtReadMemory(oxml->ctxt, xmlbuf, len, NULL, NULL,
 			XML_PARSE_NONET);
 	if (!oxml->doc) {
-		fprintf(stderr, "Failed to parse the response: %s\n", xmlbuf);
+		elog("Failed to parse the response: %s\n", xmlbuf);
 		goto err_10;
 	}
 	if (oxml->ctxt->valid == 0) {
-		fprintf(stderr, "Failed to validate the response: %s\n",
-				xmlbuf);
+		elog("Failed to validate the response: %s\n", xmlbuf);
 		goto err_20;
 	}
 	return oxml;

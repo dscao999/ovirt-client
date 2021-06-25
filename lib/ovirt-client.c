@@ -7,6 +7,7 @@
 #include <libxml/tree.h>
 #include <assert.h>
 #include <errno.h>
+#include "miscs.h"
 #include "base64.h"
 #include "ovirt-xml.h"
 #include "ovirt-client-internal.h"
@@ -120,7 +121,7 @@ err_exit_10:
 void ovirt_disconnect(struct ovirt *ov, int err)
 {
 	while (ovirt_lock(ov, 30) != 1)
-		fprintf(stderr, "Cannot obtain ov lock.\n");
+		elog("Cannot obtain ov lock.\n");
 
 	if (!err)
 		ovirt_logout(ov);

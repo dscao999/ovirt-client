@@ -7,6 +7,7 @@
 #include <libxml/tree.h>
 #include <assert.h>
 #include <errno.h>
+#include "miscs.h"
 #include "base64.h"
 #include "http_codes.h"
 #include "ovirt-xml.h"
@@ -32,7 +33,7 @@ static const char *vm_states[] = {
 
 #define perform_check(retv, ov) \
 	if (retv != CURLE_OK) { \
-		fprintf(stderr, "http failed: %d, %s\n", retv, ov->errmsg); \
+		elog("http failed: %d, %s\n", retv, ov->errmsg); \
 		return -retv; \
 	}
 
@@ -41,7 +42,7 @@ int ovirt_lock(struct ovirt *ov, unsigned int tries)
 	int retv = 1;
 
 	if (lock_lock(&ov->lock, tries) == 0) {
-		fprintf(stderr, "Cannot obtain the lock.\n");
+		elog("Cannot obtain the lock.\n");
 		retv = -(err_base + err_busy);
 	}
 	return retv;
@@ -75,7 +76,7 @@ static size_t dnload(char *buf, size_t siz, size_t nmemb, void *usrdat)
 	dnlen = nmemb * siz;
 	lenrem = ov->max_dnlen - ov->dnlen;
 	if (lenrem < dnlen) {
-		fprintf(stderr, "Cannot receive more data. Overflow!\n");
+		elog("Cannot receive more data. Overflow!\n");
 		dnlen = lenrem;
 	}
 	memcpy(ov->dndat + ov->dnlen, buf, dnlen);
@@ -91,7 +92,7 @@ static size_t hdrecv(char *buf, size_t siz, size_t nitems, void *usrdat)
 	hdlen = siz * nitems;
 	lenrem = ov->max_hdlen - ov->hdlen;
 	if (lenrem < hdlen) {
-		fprintf(stderr, "Cannot receive more header. Overflow!\n");
+		elog("Cannot receive more header. Overflow!\n");
 		hdlen = lenrem;
 	}
 	memcpy(ov->hdbuf + ov->hdlen, buf, hdlen);
@@ -111,13 +112,13 @@ static int get_json_token(char *buf, int buflen, const char *jtxt)
 	iend = json_object_iter_init_default();
 	json = json_tokener_parse(jtxt);
 	if (!json) {
-		fprintf(stderr, "OAUTH Response is not valid: %s\n", jtxt);
+		elog("OAUTH Response is not valid: %s\n", jtxt);
 		return -(err_base + err_auth_invalid);
 	}
 	iter = json_object_iter_begin(json);
 	iend = json_object_iter_end(json);
 	if (json_object_iter_equal(&iter, &iend)) {
-		fprintf(stderr, "OAUTH Response has no token: %s\n", jtxt);
+		elog("OAUTH Response has no token: %s\n", jtxt);
 		retv = -(err_base + err_no_auth);
 		goto exit_10;
 	}
@@ -128,19 +129,19 @@ static int get_json_token(char *buf, int buflen, const char *jtxt)
 		json_object_iter_next(&iter);
 	} while (!json_object_iter_equal(&iter, &iend));
 	if (json_object_iter_equal(&iter, &iend)) {
-		fprintf(stderr, "OAUTH Response has no token: %s\n", jtxt);
+		elog("OAUTH Response has no token: %s\n", jtxt);
 		retv = -(err_base + err_no_auth);
 		goto exit_10;
 	}
 	jval = json_object_iter_peek_value(&iter);
 	if (!json_object_is_type(jval, json_type_string)) {
-		fprintf(stderr, "OAUTH Response is not valid: %s\n", jtxt);
+		elog("OAUTH Response is not valid: %s\n", jtxt);
 		retv = -(err_base + err_auth_invalid);
 		goto exit_10;
 	}
 	val = json_object_get_string(jval);
 	if ((int)strlen(val) + 22 >= buflen) {
-		fprintf(stderr, "access token too long, overflow.\n");
+		elog("access token too long, overflow.\n");
 		retv = -(err_base + err_overflow);
 		goto exit_10;
 	}
@@ -165,7 +166,7 @@ static int http_check_status(const char *response, const char *msgbody)
 	if (code == http_ok)
 		return retv;
 	retv = -(err_base + code);
-	fprintf(stderr, "%s\n%s\n", response, msgbody);
+	elog("%s\n%s\n", response, msgbody);
 	return retv;
 }
 
@@ -201,7 +202,7 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 	ov->hdbuf[ov->hdlen] = 0;
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
-		fprintf(stderr, "OAUTH logon operation failed.\n");
+		elog("OAUTH logon operation failed.\n");
 		return retv;
 	}
 	len = get_json_token(ov->token, sizeof(ov->token), ov->dndat);
@@ -247,7 +248,7 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
-		fprintf(stderr, "oVirt basic logon operation failed.\n");
+		elog("oVirt basic logon operation failed.\n");
 		return retv;
 	}
 	ov->auth = AUTH_BASIC;
@@ -261,7 +262,7 @@ struct ovirt * ovirt_init(const char *ohost)
 	ov = (struct ovirt *)mmap(NULL, OVIRT_SIZE + OVIRT_HEADER_SIZE,
 			PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 	if (ov == MAP_FAILED) {
-		fprintf(stderr, "Out of Memory!\n");
+		elog("Out of Memory!\n");
 		return NULL;
 	}
 	ov->buflen = OVIRT_SIZE + OVIRT_HEADER_SIZE;
@@ -273,7 +274,7 @@ struct ovirt * ovirt_init(const char *ohost)
 	curl_global_init(CURL_GLOBAL_DEFAULT);
 	ov->curl = curl_easy_init();
 	if (!ov->curl) {
-		fprintf(stderr, "Out of Memory!\n");
+		elog("Out of Memory!\n");
 		curl_global_cleanup();
 		munmap(ov, OVIRT_SIZE + OVIRT_HEADER_SIZE);
 		return NULL;
@@ -318,7 +319,7 @@ static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
 	if (json_id)
 		semi = strchr(json_id, ';');
 	if (!json_id || !semi) {
-		fprintf(stderr, "Invalid response from session logon.\n");
+		elog("Invalid response from session logon.\n");
 		return -(err_base + err_no_jsonid);
 	}
 	len = semi - json_id;
@@ -326,7 +327,7 @@ static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)
 	if (len + 8 < buflen) {
 		strncat(buf+8, json_id, len);
 	} else {
-		fprintf(stderr, "Session Token ID too large.\n");
+		elog("Session Token ID too large.\n");
 		retv = -(err_base + err_overflow);
 	}
 	return retv;
@@ -360,7 +361,7 @@ static int ovirt_session_logon(struct ovirt *ov, int start)
 	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
-		fprintf(stderr, "Session logon failed.\n");
+		elog("Session logon failed.\n");
 		return retv;
 	}
 	if (start) {
@@ -381,7 +382,7 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 	int retv = 0, passed = 0;
 
 	if (!user || !pass) {
-		fprintf(stderr, "Username/Password NULL, invalid.\n");
+		elog("Username/Password NULL, invalid.\n");
 		return -(err_base + err_auth_invalid);
 	}
 	if (!domain)
@@ -389,7 +390,7 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 	if (strlen(user) + 1 > sizeof(ov->username) ||
 			strlen(pass) + 1 > sizeof(ov->pass) ||
 			strlen(domain) + 1 > sizeof(ov->domain)) {
-		fprintf(stderr, "username/password/domain overflow.\n");
+		elog("username/password/domain overflow.\n");
 		return -(err_base + err_overflow);
 	}
 	strcpy(ov->username, user);
@@ -404,14 +405,14 @@ int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		else if (retv == CURLE_OK)
 			passed = 1;
 		else if (ov->version != 0) {
-			fprintf(stderr, "oVirt Logon failed.\n");
+			elog("oVirt Logon failed.\n");
 			return retv;
 		}
 	}
 	if (passed == 0)
 		retv = ovirt_basic_logon(ov, user, pass, domain);
 	if (retv != CURLE_OK) {
-		fprintf(stderr, "oVirt Logon failed.\n");
+		elog("oVirt Logon failed.\n");
 		return retv;
 	}
 	retv = ovirt_session_logon(ov, 1);
@@ -429,11 +430,11 @@ int ovirt_logout(struct ovirt *ov)
 		retv = ovirt_basic_logon(ov, ov->username, ov->pass,
 				ov->domain);
 	if (retv < 0) {
-		fprintf(stderr, "user credentials become invalid.\n");
+		elog("user credentials become invalid.\n");
 		goto exit_5;
 	}
 	if ((retv = ovirt_session_logon(ov, 0)) < 0)
-		fprintf(stderr, "Internal Error: " \
+		elog("Internal Error: " \
 				"Cannot invalidate session cookie.\n");
 
 exit_5:
@@ -484,7 +485,7 @@ int ovirt_init_version(struct ovirt *ov)
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0) {
-		fprintf(stderr, "Cannot fetch the oVirt version.\n");
+		elog("Cannot fetch the oVirt version.\n");
 		return retv;
 	}
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
@@ -614,7 +615,7 @@ int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,
 	curl_slist_free_all(header);
 	retv = http_check_status(ov->hdbuf, ov->dndat);
 	if (retv != 0)
-		fprintf(stderr, "Cannot list VMs. Error code: %x\n", -retv);
+		elog("Cannot list VMs. Error code: %x\n", -retv);
 	else
 		numvms = xml_getvms(ov->dndat, ov->dnlen, vmhead, vmpool);
 
@@ -727,7 +728,7 @@ static int xml_get_conlink(const char *xmlbuf, int len,
 		return conlen;
 	node = xml_search_element(oxml, "/graphics_consoles/graphics_console");
 	if (!node) {
-		fprintf(stderr, "No graphics console information.\n");
+		elog("No graphics console information.\n");
 		goto exit_10;
 	}
 
@@ -738,7 +739,7 @@ static int xml_get_conlink(const char *xmlbuf, int len,
 		node = xml_next_node(node);
 	} while (node);
 	if (!node) {
-		fprintf(stderr, "No spice graphics console information.\n");
+		elog("No spice graphics console information.\n");
 		goto exit_10;
 	}
 	conlen = xml_get_node_attr(node, "href", conlink, maxlen);
@@ -780,7 +781,7 @@ static int ovirt_download(struct ovirt *ov, const char *link)
 		return retv;
 	oxml = ovirt_xml_init(ov->dndat, ov->dnlen);
 	if (!oxml) {
-		fprintf(stderr, "Download corrrupt.\n%s\n", ov->dndat);
+		elog("Download corrrupt.\n%s\n", ov->dndat);
 		retv = -(err_base + err_download);
 		return retv;
 	}
@@ -898,7 +899,7 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 
 	fout = fopen(vv, "wb");
 	if (!fout) {
-		fprintf(stderr, "Cannot open file %s: %s\n", vv,
+		elog("Cannot open file %s: %s\n", vv,
 				strerror(errno));
 		retv = -(err_base + err_file);
 		goto exit_5;
@@ -935,7 +936,7 @@ int ovirt_get_vmconsole(struct ovirt *ov, struct ovirt_vm *vm, const char *vv)
 	if (len > 0) {
 		num = fwrite(ov->dndat, 1, len, fout);
 		if (num < len)
-			fprintf(stderr, "File write not complete: %s\n",
+			elog("File write not complete: %s\n",
 					strerror(errno));
 	}
 	retv = len;
@@ -1156,7 +1157,7 @@ void ovirt_vmpool_free(struct list_head *vmpool)
 	list_for_each_safe(cur, tmp, vmpool) {
 		curpool = list_entry(cur, struct ovirt_pool, pool_link);
 		if (curpool->vmsnow != 0) {
-			fprintf(stderr, "pool kept: %s\n", curpool->id);
+			elog("pool kept: %s\n", curpool->id);
 			curpool->removed = 1;
 			continue;
 		}
