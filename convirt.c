@@ -30,6 +30,8 @@ static int post_view(struct list_head *head)
 	struct list_head *cur, *tmp;
 	pid_t expid;
 	int num, wstatus;
+	time_t curtm;
+	char *stmp, *ln;
 
 	num = 0;
 	list_for_each_safe(cur, tmp, head) {
@@ -39,8 +41,13 @@ static int post_view(struct list_head *head)
 			fprintf(stderr, "waitpid failed: %s\n",
 					strerror(errno));
 		else if (expid > 0) {
-			fprintf(stderr, "Info: vm %s disconnected, code: %x\n",
-					view->vmid, wstatus);
+			curtm = time(NULL);
+			stmp = ctime(&curtm);
+			ln = strchr(stmp, '\n');
+			if (ln)
+				*ln = 0;
+			fprintf(stderr, "%s Info: vm %s disconnected, code: %x\n",
+					stmp, view->vmid, wstatus);
 			list_del(cur, head);
 			free(view);
 			num++;
@@ -217,6 +224,7 @@ int main(int argc, char *argv[])
 	int vmsmax, vmsnow;
 	char ans[16], *digit;
 
+	tzset();
 	retv = 0;
 	if (argc > 1)
 		username = argv[1];
