@@ -205,7 +205,7 @@ static int ovirt_oauth_logon(struct ovirt *ov, const char *user,
 		elog("OAUTH logon operation failed.\n");
 		return retv;
 	}
-	len = get_json_token(ov->token, sizeof(ov->token), ov->dndat);
+	len = get_json_token(ov->bearer, sizeof(ov->bearer), ov->dndat);
 	if (len < 0)
 		return len;
 	ov->auth = AUTH_OAUTH;
@@ -228,9 +228,9 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 	len = bin2str_b64(ov->dndat, ov->max_dnlen,
 			(const unsigned char *)ov->updat, len);
 	ov->dndat[len] = 0;
-	strcpy(ov->token, hd_basic_auth);
-	strcat(ov->token, ov->dndat);
-	header = curl_slist_append(header, ov->token);
+	strcpy(ov->basic_auth, hd_basic_auth);
+	strcat(ov->basic_auth, ov->dndat);
+	header = curl_slist_append(header, ov->basic_auth);
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, ovirt_api);
 	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
@@ -291,6 +291,9 @@ struct ovirt * ovirt_init(const char *ohost)
 	curl_easy_setopt(ov->curl, CURLOPT_USERAGENT, "Lenovo oVirt Client 1.0");
 
 	ov->auth = AUTH_NONE;
+	ov->token[0] = 0;
+	ov->bearer[0] = 0;
+	ov->basic_auth[0] = 0;
 	ov->version = 0;
 	ov->lock = 0;
 	INIT_LIST_HEAD(&ov->vmhead);
@@ -344,7 +347,10 @@ static int ovirt_session_logon(struct ovirt *ov, int start)
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, ovirt_api);
 	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
-	header = curl_slist_append(header, ov->token);
+	if (ov->auth == AUTH_OAUTH)
+		header = curl_slist_append(header, ov->bearer);
+	else if (ov->auth == AUTH_BASIC)
+		header = curl_slist_append(header, ov->basic_auth);
 	if (start)
 		header = curl_slist_append(header, hd_prefer);
 	curl_easy_setopt(ov->curl, CURLOPT_NOBODY, 1);
@@ -369,8 +375,6 @@ static int ovirt_session_logon(struct ovirt *ov, int start)
 				ov->hdbuf);
 		if (len < 0)
 			retv = len;
-		else
-			ov->auth = AUTH_SESSION;
 	}
 	return retv;
 }
@@ -1306,4 +1310,37 @@ const char * ovirt_vm_status_internal(int sta)
 	if (sta < 0 || sta >= sizeof(vm_states) / sizeof(char *))
 		sta = sizeof(vm_states) / sizeof(char *) - 1;
 	return vm_states[sta];
+}
+
+int ovirt_vm_logon__(struct ovirt *ov, struct ovirt_vm *vm)
+{
+	struct curl_slist *header = NULL;
+	int retv;
+
+	strcpy(ov->uri, ov->engine);
+	strcat(ov->uri, vm->href);
+	strcat(ov->uri, "/logon");
+	if (ov->auth == AUTH_OAUTH)
+		header = curl_slist_append(header, ov->bearer);
+	else if (ov->auth == AUTH_BASIC)
+		header = curl_slist_append(header, ov->basic_auth);
+	header = curl_slist_append(header, hd_content_xml);
+	header = curl_slist_append(header, hd_accept_xml);
+	ov->hdlen = 0;
+	ov->dnlen = 0;
+	ov->errmsg[0] = 0;
+	curl_easy_setopt(ov->curl, CURLOPT_URL, ov->uri);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, header);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDS, action_empty);
+	curl_easy_setopt(ov->curl, CURLOPT_POSTFIELDSIZE, action_empty_len);
+	retv = curl_easy_perform(ov->curl);
+	perform_check(retv, ov);
+	curl_easy_setopt(ov->curl, CURLOPT_POST, 0);
+	curl_easy_setopt(ov->curl, CURLOPT_HTTPHEADER, NULL);
+	curl_slist_free_all(header);
+	ov->hdbuf[ov->hdlen] = 0;
+	ov->dndat[ov->dnlen] = 0;
+	retv = http_check_status(ov->hdbuf, ov->dndat);
+
+	return retv;
 }

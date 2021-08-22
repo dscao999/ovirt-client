@@ -31,6 +31,7 @@ const char *ovirt_vm_status(int sta);
 int ovirt_vm_start(struct ovirt *ov, const char *vmid);
 int ovirt_vm_stop(struct ovirt *ov, const char *vmid);
 int ovirt_vm_getvv(struct ovirt *ov, const char *vmid, const char *vvname);
+int ovirt_vm_logon(struct ovirt *ov, const char *vmid);
 
 #ifdef __cplusplus
 }
