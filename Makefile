@@ -5,10 +5,10 @@ CFLAGS += -I./lib
 all: lib convirt b64
 
 convirt: convirt.o
-	$(LINK.o) $^ -L./lib -lovcurl -lcurl -o $@
+	$(LINK.o) $^ -L./lib -lovcurl -lcurl -lxml2 -ljson-c -o $@
 
 b64: b64encode.o
-	$(LINK.o) $^ -L./lib -lovcurl -o $@
+	$(LINK.o) $^ -L./lib -lovcurl -lxml2 -ljson-c -o $@
 
 lib:
 	$(MAKE) -C lib
