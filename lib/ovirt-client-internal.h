@@ -11,7 +11,7 @@ enum OVIRT_AUTH {AUTH_NONE, AUTH_BASIC, AUTH_OAUTH, AUTH_SESSION};
 struct ovirt {
 	CURL *curl;
 	volatile int lock;
-	unsigned short version, auth;
+	unsigned short version, auth_type;
 	unsigned short uplen, uppos;
 	unsigned int buflen;
 	unsigned int dnlen;
@@ -21,8 +21,7 @@ struct ovirt {
 	char username[32], domain[32], pass[64];
 	char engine[64];
 	char token[256];
-	char bearer[256];
-	char basic_auth[256];
+	char auth[256];
 	char uri[256];
 	struct list_head vmhead, vmpool;
 	unsigned short numvms, numpools;
