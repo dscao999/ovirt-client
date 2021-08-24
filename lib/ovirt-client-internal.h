@@ -86,7 +86,7 @@ static inline void ovirt_set_verbose(struct ovirt *ov, int verbose)
 int ovirt_logon(struct ovirt *ov, const char *user, const char *pass,
 		const char *domain);
 int ovirt_logout(struct ovirt *ov);
-int ovirt_vm_logon__(struct ovirt *ov, struct ovirt_vm *vm);
+int ovirt_vm_logon__(struct ovirt *ov, struct ovirt_vm *vm, int async);
 
 int ovirt_init_version(struct ovirt *ov);
 int ovirt_list_vms(struct ovirt *ov, struct list_head *vmhead,

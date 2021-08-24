@@ -394,7 +394,7 @@ int ovirt_vmpool_grabvm(struct ovirt *ov, const char *id)
 	return retv;
 }
 
-int ovirt_vm_logon(struct ovirt *ov, const char *vmid)
+int ovirt_vm_logon(struct ovirt *ov, const char *vmid, int async)
 {
 	int retv = 0;
 	struct ovirt_vm *vm;
@@ -408,7 +408,7 @@ int ovirt_vm_logon(struct ovirt *ov, const char *vmid)
 		retv = -1;
 		goto exit_10;
 	}
-	retv = ovirt_vm_logon__(ov, vm);
+	retv = ovirt_vm_logon__(ov, vm, async);
 
 exit_10:
 	ovirt_unlock(ov);

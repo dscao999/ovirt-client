@@ -1297,14 +1297,20 @@ const char * ovirt_vm_status_internal(int sta)
 	return vm_states[sta];
 }
 
-int ovirt_vm_logon__(struct ovirt *ov, struct ovirt_vm *vm)
+int ovirt_vm_logon__(struct ovirt *ov, struct ovirt_vm *vm, int async)
 {
 	struct curl_slist *header = NULL;
-	int retv;
+	int retv = -1;
 
+	if (ov->version < 4) {
+		elog("vm logon only supported on version 4 and higher.\n");
+		return retv;
+	}
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, vm->href);
 	strcat(ov->uri, "/logon");
+	if (async)
+		strcat(ov->uri, "?async");
 	header = curl_slist_append(header, ov->auth);
 	header = curl_slist_append(header, hd_content_xml);
 	header = curl_slist_append(header, hd_accept_xml);
