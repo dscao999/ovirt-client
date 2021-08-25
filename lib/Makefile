@@ -1,6 +1,6 @@
 CFLAGS = -fPIC -Wall -g -I/usr/include/libxml2
 
-.PHONY: clean all
+.PHONY: clean all release
 
 all: libovcurl.a
 
@@ -13,5 +13,9 @@ xmlp: xmlp.o ovirt-xml.o
 clean:
 	rm -f libovcurl.a xmlp
 	rm -f *.o
+
+release: all
+release: CFLAGS += -O2
+release: LDFLAGS += -Wl,-O,2
 
 include Makefile.defs

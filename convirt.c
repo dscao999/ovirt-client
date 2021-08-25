@@ -274,6 +274,7 @@ int main(int argc, char *argv[])
 		return 2;
 	}
 
+	curid = NULL;
 	while (global_stop == 0) {
 		retv = refresh_idrecs(ov, &numpools, &numvms);
 		if (retv < 0) {

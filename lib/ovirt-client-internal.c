@@ -229,7 +229,7 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 			(const unsigned char *)ov->updat, len);
 	ov->dndat[len] = 0;
 	strcpy(ov->auth, hd_basic_auth);
-	strcat(ov->auth, ov->dndat);
+	strncat(ov->auth, ov->dndat, sizeof(ov->auth)-1);
 	header = curl_slist_append(header, ov->auth);
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, ovirt_api);

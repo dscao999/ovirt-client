@@ -16,7 +16,7 @@ static const char BASE64_CHAR[] = {
 
 int str2bin_b64(unsigned char *binbytes, int num, const char *str)
 {
-	int bpos, bitpos, bbit;
+	int bpos = -1, bitpos, bbit;
 	unsigned char nxtbyte, nchr;
 	const char *pchr;
 	unsigned short digit;
@@ -80,7 +80,7 @@ int bin2str_b64(char *strbuf, int len, const unsigned char *binbytes, int num)
 	int i, idx;
 	char *p64;
 	unsigned char nxtbyte;
-	int bpos, bbit;
+	int bpos, bbit = 0;
 	unsigned short tmpc;
 
 	p64 = strbuf;
