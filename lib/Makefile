@@ -11,7 +11,7 @@ xmlp: xmlp.o ovirt-xml.o
 	$(LINK.o) $^ -lxml2 -o $@
 
 clean:
-	rm -f libovcurl.so xmlp
+	rm -f libovcurl.a xmlp
 	rm -f *.o
 
 include Makefile.defs
