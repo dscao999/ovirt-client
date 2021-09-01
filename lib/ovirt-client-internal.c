@@ -25,8 +25,19 @@ static const unsigned short err_no_jsonid = 0x7;
 static const char *vm_states[] = {
 	"wait_for_launch", "down", "suspended", "powering_down",
 	"reboot_in_progress", "saving_state", "powering_up",
-	"restoring_state", "up", "unknown"
+	"restoring_state", "up", "unknown", NULL
 };
+
+const unsigned char VM_LAUNCH = 0;
+const unsigned char VM_DOWN = 1;
+const unsigned char VM_SUSPEND = 2;
+const unsigned char VM_IN_DOWN = 3;
+const unsigned char VM_REBOOT = 4;
+const unsigned char VM_SAVE = 5;
+const unsigned char VM_IN_UP = 6;
+const unsigned char VM_RESTORE = 7;
+const unsigned char VM_UP = 8;
+const unsigned char VM_UNKNOWN = 9;
 
 #define OVIRT_SIZE (4*1024*1024)
 #define OVIRT_HEADER_SIZE	(1024*1024)
@@ -1302,16 +1313,13 @@ int ovirt_vm_logon__(struct ovirt *ov, struct ovirt_vm *vm, int async)
 	struct curl_slist *header = NULL;
 	int retv = -1;
 
-	if (ov->version < 4) {
-		elog("vm logon only supported on version 4 and higher.\n");
-		return retv;
-	}
 	strcpy(ov->uri, ov->engine);
 	strcat(ov->uri, vm->href);
 	strcat(ov->uri, "/logon");
 	if (async)
-		strcat(ov->uri, "?async");
-	header = curl_slist_append(header, ov->auth);
+		strcat(ov->uri, "?async=1");
+	header = curl_slist_append(header, hd_prefer);
+	header = curl_slist_append(header, ov->token);
 	header = curl_slist_append(header, hd_content_xml);
 	header = curl_slist_append(header, hd_accept_xml);
 	ov->hdlen = 0;

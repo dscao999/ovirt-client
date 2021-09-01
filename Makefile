@@ -4,6 +4,7 @@ CFLAGS = -Wall -g
 #  Variables for cross compile
 #
 HOST_ARCH := $(shell $(CC) --print-multiarch)
+OBJECT_ARCH = $(shell $(CC) --print-multiarch)
 
 CC		= $(CROSS_COMPILE)gcc
 LD		= $(CROSS_COMPILE)ld
@@ -15,13 +16,12 @@ READELF		= $(CROSS_COMPILE)readelf
 STRIP		= $(CROSS_COMPILE)strip
 
 ifneq ($(CROSS_COMPILE),)
-	OBJECT_ARCH := $(shell $(CC) --print-multiarch)
-	SYSROOT := $(shell $(CC) --print-sysroot)
-	PKG_CONFIG_SYSROOT_DIR := $(SYSROOT)
-	RPATH_LINK := -Xlinker -rpath-link=$(SYSROOT)/usr/lib/$(OBJECT_ARCH)
+SYSROOT := $(shell $(CC) --print-sysroot)
+PKG_CONFIG_SYSROOT_DIR := $(SYSROOT)
+RPATH_LINK := -Xlinker -rpath-link=$(SYSROOT)/usr/lib/$(OBJECT_ARCH)
+LDFLAGS += $(RPATH_LINK)
 endif
 
-LDFLAGS += $(RPATH_LINK)
 
 .EXPORT_ALL_VARIABLES:
 
@@ -36,7 +36,7 @@ json_lib = $(shell pkg-config --libs json-c)
 
 LIBS += $(curl_lib) $(xml2_lib) $(json_lib)
 
-.PHONY: all clean release lib dclean
+.PHONY: all clean release -lovcurl dclean
 
 TARGET =
 
@@ -44,14 +44,13 @@ all: convirt
 
 release: all
 
-convirt: convirt.o
-	$(MAKE) -C lib $(TARGET)
-	$(LINK.o) $^ -lovcurl $(LIBS) -o $@
+convirt: convirt.o -lovcurl
+	$(LINK.o) $^ $(LIBS) -o $@
 
 b64: b64encode.o
 	$(LINK.o) $^ -L./lib -lovcurl -o $@
 
-lib:
+-lovcurl:
 	$(MAKE) -C lib $(TARGET)
 
 clean:

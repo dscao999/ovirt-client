@@ -2,8 +2,13 @@
 xml_header = $(shell pkg-config --cflags libxml-2.0)
 xml_lib = $(shell pkg-config --libs libxml-2.0)
 
-CFLAGS += -Wall $(xml_header)
-LIBS += $(xml_lib)
+CFLAGS = -g -Wall $(xml_header)
+LDFLAGS =
+LIBS = $(xml_lib)
+
+ifneq ($(CROSS_COMPILE),)
+	LDFLAGS += $(RPATH_LINK)
+endif
 
 .PHONY: clean all release dclean
 

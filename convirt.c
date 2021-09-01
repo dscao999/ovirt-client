@@ -70,14 +70,14 @@ void sig_handler(int sig)
 		global_stop = 1;
 }
 
-static int connect_vm(struct ovirt *ov, const char *vmid, struct list_head *head)
+static int connect_vm(struct ovirt *ov, const char *vmid,
+		struct list_head *head, int logon)
 {
 	int retv, start = 0;
 	struct list_head *cur;
 	struct remote_view *view;
 	char vvname[128];
 	pid_t cpid;
-	const char *vm_status;
 
 	list_for_each(cur, head) {
 		view = list_entry(cur, struct remote_view , vw_link);
@@ -101,9 +101,7 @@ static int connect_vm(struct ovirt *ov, const char *vmid, struct list_head *head
 	retv = ovirt_vm_status_query(ov, vmid);
 	if (retv < 0)
 		goto err_exit_10;
-	vm_status = ovirt_vm_status(retv);
-	if (strcmp(vm_status, "down") == 0 ||
-			strcmp(vm_status, "suspended") == 0) {
+	if (retv == VM_DOWN || retv == VM_SUSPEND) {
 		retv = ovirt_vm_start(ov, vmid);
 		if (retv < 0)
 			goto err_exit_10;
@@ -115,11 +113,9 @@ static int connect_vm(struct ovirt *ov, const char *vmid, struct list_head *head
 			retv = ovirt_vm_status_query(ov, vmid);
 			if (retv < 0)
 				goto err_exit_10;
-			vm_status = ovirt_vm_status(retv);
-			if (strcmp(vm_status, "down") == 0 ||
-					strcmp(vm_status, "suspended") == 0)
+			if (retv == VM_DOWN || retv == VM_SUSPEND)
 				goto err_exit_10;
-			if (strcmp(vm_status, "wait_for_launch") != 0)
+			if (retv != VM_LAUNCH)
 				break;
 		}
 	}
@@ -147,7 +143,11 @@ static int connect_vm(struct ovirt *ov, const char *vmid, struct list_head *head
 	}
 	view->rid = cpid;
 	list_add(&view->vw_link, head);
-
+	if (!logon)
+		return retv;
+	retv = ovirt_vm_logon(ov, vmid, 1);
+	if (retv)
+		fprintf(stderr, "Logon to vm %s failed: %d\n", vmid, retv);
 	return retv;
 
 err_exit_10:
@@ -218,7 +218,7 @@ int main(int argc, char *argv[])
 	struct remote_view *cur_view;
 	struct timespec tm;
 	int numpools;
-	char *host = "engine.lidc.com";
+	char *host = "engine.cluster";
 	struct ovirt_uuid *curid;
 	const char *vm_status;
 	int vmsmax, vmsnow;
@@ -262,7 +262,7 @@ int main(int argc, char *argv[])
 		return 6;
 	}
 
-	ov = ovirt_connect(host, username, pass, NULL);
+	ov = ovirt_connect(host, username, pass, "2016dc.com");
 	if (!ov) {
 		fprintf(stderr, "Connection Initialization failed.\n");
 		return 1;
@@ -329,7 +329,7 @@ int main(int argc, char *argv[])
 			if (retv == 0)
 				fprintf(stderr, "Cannot allocate more VM.\n");
 		} else if (selvm >= numpools && selvm < numvms + numpools) {
-			retv = connect_vm(ov, idrecs[selvm].id, &view_head);
+			retv = connect_vm(ov, idrecs[selvm].id, &view_head, 1);
 		}
 		if (view_exited != 0) {
 			view_exited = 0;

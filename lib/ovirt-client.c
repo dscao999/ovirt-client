@@ -7,6 +7,7 @@
 #include <libxml/tree.h>
 #include <assert.h>
 #include <errno.h>
+#include "http_codes.h"
 #include "miscs.h"
 #include "base64.h"
 #include "ovirt-xml.h"
@@ -396,8 +397,9 @@ int ovirt_vmpool_grabvm(struct ovirt *ov, const char *id)
 
 int ovirt_vm_logon(struct ovirt *ov, const char *vmid, int async)
 {
-	int retv = 0;
+	int retv = 0, vmstat, count;
 	struct ovirt_vm *vm;
+	static const struct timespec itm = {.tv_sec = 1, .tv_nsec = 0};
 
 	retv = ovirt_lock(ov, 30);
 	if (retv != 1)
@@ -408,7 +410,27 @@ int ovirt_vm_logon(struct ovirt *ov, const char *vmid, int async)
 		retv = -1;
 		goto exit_10;
 	}
-	retv = ovirt_vm_logon__(ov, vm, async);
+
+	vmstat = ovirt_vm_action(ov, vm, "status");
+	if (vmstat == VM_DOWN || vmstat == VM_IN_DOWN || vmstat == VM_SUSPEND ||
+			vmstat == VM_REBOOT) {
+		fprintf(stderr, "Cannot logon to VM in state: %s\n", 
+				ovirt_vm_status_internal(vmstat));
+		retv = -1;
+		goto exit_10;
+	}
+	count = 0;
+	while (vmstat != VM_UP && count < 30) {
+		nanosleep(&itm, NULL);
+		vmstat = ovirt_vm_action(ov, vm, "status");
+		count += 1;
+	}
+	if (count < 30)
+		retv = ovirt_vm_logon__(ov, vm, async);
+	else {
+		retv = -1;
+		fprintf(stderr, "VM not up in %d seconds.\n", count);
+	}
 
 exit_10:
 	ovirt_unlock(ov);
