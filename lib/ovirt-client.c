@@ -7,6 +7,7 @@
 #include <libxml/tree.h>
 #include <assert.h>
 #include <errno.h>
+#include <pthread.h>
 #include "http_codes.h"
 #include "miscs.h"
 #include "base64.h"
@@ -112,6 +113,7 @@ struct ovirt * ovirt_connect(const char *host, const char *user,
 	retv = ovirt_init_version(ov);
 	if (retv < 0)
 		goto err_exit_10;
+	memcpy(((char*)ov)+ov->buflen, ov, sizeof(struct ovirt));
 	return ov;
 
 err_exit_10:
@@ -395,23 +397,25 @@ int ovirt_vmpool_grabvm(struct ovirt *ov, const char *id)
 	return retv;
 }
 
-int ovirt_vm_logon(struct ovirt *ov, const char *vmid, int async)
+struct logon_args {
+	struct ovirt *ov;
+	struct ovirt_vm * vm;
+	int async;
+};
+
+void * logon_routine(void *arg)
 {
-	int retv = 0, vmstat, count;
-	struct ovirt_vm *vm;
+	struct logon_args *dat = arg;
+	int vmstat, count, retv;
 	static const struct timespec itm = {.tv_sec = 1, .tv_nsec = 0};
 
-	retv = ovirt_lock(ov, 30);
-	if (retv != 1)
-		return retv;
-
-	vm = vm_id2struct(ov, vmid);
-	if (!vm) {
-		retv = -1;
-		goto exit_10;
+	retv = ovirt_lock(dat->ov, 30);
+	if (retv != 1) {
+		fprintf(stderr, "Cannot lock for logon.\n");
+		return NULL;
 	}
 
-	vmstat = ovirt_vm_action(ov, vm, "status");
+	vmstat = ovirt_vm_action(dat->ov, dat->vm, "status");
 	if (vmstat == VM_DOWN || vmstat == VM_IN_DOWN || vmstat == VM_SUSPEND ||
 			vmstat == VM_REBOOT) {
 		fprintf(stderr, "Cannot logon to VM in state: %s\n", 
@@ -422,16 +426,63 @@ int ovirt_vm_logon(struct ovirt *ov, const char *vmid, int async)
 	count = 0;
 	while (vmstat != VM_UP && count < 30) {
 		nanosleep(&itm, NULL);
-		vmstat = ovirt_vm_action(ov, vm, "status");
+		vmstat = ovirt_vm_action(dat->ov, dat->vm, "status");
 		count += 1;
 	}
 	if (count < 30)
-		retv = ovirt_vm_logon__(ov, vm, async);
+		retv = ovirt_vm_logon__(dat->ov, dat->vm, dat->async);
 	else {
 		retv = -1;
 		fprintf(stderr, "VM not up in %d seconds.\n", count);
 	}
 
+exit_10:
+	ovirt_unlock(dat->ov);
+	return NULL;
+}
+
+int ovirt_vm_logon(struct ovirt *ov, const char *vmid, int async)
+{
+	int retv = 0; 
+	struct ovirt_vm *vm;
+	struct ovirt *ov1;
+	struct logon_args logon;
+	pthread_t thid;
+	pthread_attr_t thattr;
+
+	retv = ovirt_lock(ov, 30);
+	if (retv != 1)
+		return retv;
+	vm = vm_id2struct(ov, vmid);
+	if (!vm) {
+		retv = -1;
+		goto exit_10;
+	}
+
+	ov1 = (struct ovirt *)(((char *)ov) + ov->buflen);
+	logon.ov = ov1;
+	logon.vm = vm;
+	logon.async = async;
+	retv = pthread_attr_init(&thattr);
+	if (retv) {
+		fprintf(stderr, "Cannot initialize thread attribute: %s\n",
+				strerror(retv));
+		retv = -retv;
+		goto exit_10;
+	}
+	retv = pthread_attr_setdetachstate(&thattr, PTHREAD_CREATE_DETACHED);
+	if (retv) {
+		fprintf(stderr, "Cannot set thread to detached: %s\n",
+				strerror(retv));
+		pthread_attr_destroy(&thattr);
+		retv = -retv;
+		goto exit_10;
+	}
+	retv = pthread_create(&thid, &thattr, logon_routine, &logon);
+	pthread_attr_destroy(&thattr);
+	if (retv)
+		fprintf(stderr, "Cannot create thread to do logon: %s\n",
+				strerror(retv));
 exit_10:
 	ovirt_unlock(ov);
 	return retv;

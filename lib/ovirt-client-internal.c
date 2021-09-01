@@ -269,14 +269,16 @@ static int ovirt_basic_logon(struct ovirt *ov, const char *user,
 struct ovirt * ovirt_init(const char *ohost)
 {
 	struct ovirt *ov;
+	int buflen;
 
-	ov = (struct ovirt *)mmap(NULL, OVIRT_SIZE + OVIRT_HEADER_SIZE,
+	buflen = OVIRT_SIZE + OVIRT_HEADER_SIZE;
+	ov = (struct ovirt *)mmap(NULL, buflen*2,
 			PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 	if (ov == MAP_FAILED) {
 		elog("Out of Memory!\n");
 		return NULL;
 	}
-	ov->buflen = OVIRT_SIZE + OVIRT_HEADER_SIZE;
+	ov->buflen = buflen;
 	ov->max_dnlen = OVIRT_SIZE - sizeof(struct ovirt);
 	ov->max_hdlen = OVIRT_HEADER_SIZE;
 	ov->hdbuf = ((char *)ov) + OVIRT_SIZE;
@@ -320,7 +322,7 @@ void ovirt_exit(struct ovirt *ov)
 	ovirt_vmpool_free(&ov->vmpool);
 	curl_easy_cleanup(ov->curl);
 	curl_global_cleanup();
-	munmap(ov, ov->buflen);
+	munmap(ov, ov->buflen*2);
 }
 
 static int ovirt_session_cookie(char *buf, int buflen, const char *hdbuf)

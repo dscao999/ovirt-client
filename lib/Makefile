@@ -2,8 +2,8 @@
 xml_header = $(shell pkg-config --cflags libxml-2.0)
 xml_lib = $(shell pkg-config --libs libxml-2.0)
 
-CFLAGS = -g -Wall $(xml_header)
-LDFLAGS =
+CFLAGS = -g -Wall $(xml_header) -pthread -fPIC
+LDFLAGS = -pthread
 LIBS = $(xml_lib)
 
 ifneq ($(CROSS_COMPILE),)
@@ -12,7 +12,7 @@ endif
 
 .PHONY: clean all release dclean
 
-all: libovcurl.a
+all: libovcurl.a xmlp
 
 libovcurl.a: ovirt-client.o ovirt-client-internal.o ovirt-xml.o base64.o miscs.o
 	$(AR) rsc $@ $^

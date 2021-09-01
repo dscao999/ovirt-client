@@ -1,5 +1,6 @@
 
-CFLAGS = -Wall -g
+CFLAGS = -Wall -g -pthread
+LDFLAGS = -pthread
 #
 #  Variables for cross compile
 #
